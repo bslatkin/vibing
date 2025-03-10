@@ -56,12 +56,25 @@ class TicTacToe:
     def get_board_state(self):
         return self.board.copy()
 
+    def get_reward(self):
+        """A simple reward function for Tic-Tac-Toe."""
+        winner = self.check_winner()
+        if winner == 1:
+            return 1  # Player 1 (X) win
+        elif winner == 2:
+            return -1  # Player 2 (O) win
+        elif self.is_board_full():
+            return 0  # Draw
+        else:
+            return 0  # No reward yet
 
-def generate_training_data(num_games):
+
+def generate_training_data(num_games, context_window):
     data = []
-    game = TicTacToe()
     for _ in range(num_games):
-        game.reset()
+        game = TicTacToe()
+        board_history = []
+        game_moves = []  # Store moves made in the game
         while True:
             empty_cells = [
                 (r, c)
@@ -73,24 +86,93 @@ def generate_training_data(num_games):
                 break
             row, col = random.choice(empty_cells)
             game.make_move(row, col)
-            data.append((game.get_board_state().flatten(), row * 3 + col))
+            game_moves.append((row, col))
+
+            # Update history
+            board_history.append(game.get_board_state().flatten())
+            board_history = board_history[
+                -context_window:
+            ]  # Keep only context_window
+
+            # Pad board history for uniform input
+            while len(board_history) < context_window:
+                board_history.insert(
+                    0,
+                    np.zeros(9),
+                )  # Pad with empty boards at the start
 
             winner = game.check_winner()
             if winner != 0 or game.is_board_full():
+                reward = game.get_reward()
+                for i, (row, col) in enumerate(game_moves):
+                    # Assign reward to each move in the game
+                    # For simplicity, we'll just use the end-of-game reward
+                    # In a more advanced setup, you might want to assign
+                    # intermediate rewards based on board state
+                    if game.current_player == 2:
+                        data.append(
+                            (
+                                np.array(board_history[: len(game_moves) - i]),
+                                row * 3 + col,
+                                reward,
+                            )
+                        )
+                    else:
+                        data.append(
+                            (
+                                np.array(board_history[: len(game_moves) - i]),
+                                row * 3 + col,
+                                -reward,
+                            )
+                        )
                 break
     return data
 
 
-def create_model():
-    model = keras.Sequential(
-        [
-            layers.Dense(128, activation="relu", input_shape=(9,)),
-            layers.Dense(64, activation="relu"),
-            layers.Dense(
-                9, activation="softmax"
-            ),  # Output layer with 9 probabilities
-        ]
-    )
+def create_transformer_model(
+    context_window=8,
+    embedding_dim=16,
+    num_heads=2,
+    ff_dim=32,
+):
+    """Creates a Transformer model for Tic-Tac-Toe with a context window."""
+
+    inputs = keras.Input(shape=(context_window, 9))  # Sequence of board states
+
+    # Embedding layer
+    x = layers.Dense(embedding_dim)(inputs)
+
+    # Reshape for multi-head attention
+    x = layers.Reshape((context_window, embedding_dim))(x)
+
+    # Transformer encoder layers
+    for _ in range(2):
+        # Multi-Head Self-Attention
+        attention_output = layers.MultiHeadAttention(
+            num_heads=num_heads,
+            key_dim=embedding_dim,
+        )(x, x)
+        x = layers.Add()([x, attention_output])  # Skip connection
+        x = layers.LayerNormalization(epsilon=1e-6)(x)
+
+        # Feed Forward
+        ffn = keras.Sequential(
+            [
+                layers.Dense(ff_dim, activation="relu"),
+                layers.Dense(embedding_dim),
+            ]
+        )
+        ffn_output = ffn(x)
+        x = layers.Add()([x, ffn_output])  # Skip connection
+        x = layers.LayerNormalization(epsilon=1e-6)(x)
+
+    # Take the last state in the sequence (current state)
+    x = x[:, -1, :]
+
+    # Output layer
+    outputs = layers.Dense(9, activation="softmax")(x)
+
+    model = keras.Model(inputs=inputs, outputs=outputs)
     model.compile(
         optimizer="adam",
         loss="sparse_categorical_crossentropy",
@@ -100,17 +182,32 @@ def create_model():
 
 
 def train_model(model, data, epochs=10, batch_size=32):
-    X = np.array([board for board, _ in data])
-    y = np.array([move for _, move in data])
+    X = np.array([board_sequence for board_sequence, _, _ in data])
+    y = np.array([move for _, move, _ in data])
     model.fit(X, y, epochs=epochs, batch_size=batch_size)
 
 
-def predict_next_move(model, board):
-    board_flat = board.flatten().reshape(1, 9)
-    predictions = model.predict(board_flat)[0]
+def predict_next_move(model, board_history):
+    """Predicts the next move based on the board history."""
+
+    # Pad history
+    while len(board_history) < model.input_shape[1]:
+        board_history.insert(0, np.zeros(9))
+
+    board_history = board_history[
+        -model.input_shape[1] :
+    ]  # trim the history if needed
+
+    board_history_array = np.array(board_history).reshape(
+        1,
+        model.input_shape[1],
+        model.input_shape[2],
+    )
+    predictions = model.predict(board_history_array)[0]
 
     # Mask out invalid moves
-    valid_moves = np.where(board.flatten() == 0)[0]
+    current_board = board_history[-1].reshape((3, 3))
+    valid_moves = np.where(current_board.flatten() == 0)[0]
     if len(valid_moves) == 0:
         return None
 
@@ -124,13 +221,15 @@ def predict_next_move(model, board):
 
 def play_game(model):
     game = TicTacToe()
+    board_history = []
     while True:
         print("\nCurrent Board:")
         print(game.board)
 
         if game.current_player == 1:
             # Model's turn
-            predicted_move = predict_next_move(model, game.get_board_state())
+            board_history.append(game.get_board_state().flatten())
+            predicted_move = predict_next_move(model, board_history)
             if predicted_move is None:
                 print("No valid moves left.")
                 break
@@ -144,6 +243,7 @@ def play_game(model):
                     row = int(input("Enter row (0-2): "))
                     col = int(input("Enter column (0-2): "))
                     if game.make_move(row, col):
+                        board_history.append(game.get_board_state().flatten())
                         break
                     else:
                         print("Invalid move. Try again.")
@@ -163,11 +263,11 @@ def play_game(model):
 if __name__ == "__main__":
     # 1. Generate Data
     print("Generating training data...")
-    training_data = generate_training_data(num_games=50000)
+    training_data = generate_training_data(num_games=50000, context_window=5)
 
     # 2. Create Model
     print("Creating model...")
-    model = create_model()
+    model = create_transformer_model(context_window=5)
 
     # 3. Train Model
     print("Training model...")
