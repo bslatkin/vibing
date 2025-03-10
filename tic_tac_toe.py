@@ -1,8 +1,12 @@
-import numpy as np
+import argparse
+import os
+import pickle
 import random
+from dataclasses import dataclass
+
+import numpy as np
 from tensorflow import keras
 from tensorflow.keras import layers
-from dataclasses import dataclass
 
 
 @dataclass
@@ -142,10 +146,7 @@ def generate_training_data(num_games, context_window):
 
 
 def create_transformer_model(
-    context_window=8,
-    embedding_dim=16,
-    num_heads=2,
-    ff_dim=32,
+    context_window=8, embedding_dim=16, num_heads=2, ff_dim=32
 ):
     """Creates a Transformer model for Tic-Tac-Toe with a context window."""
 
@@ -161,8 +162,7 @@ def create_transformer_model(
     for _ in range(2):
         # Multi-Head Self-Attention
         attention_output = layers.MultiHeadAttention(
-            num_heads=num_heads,
-            key_dim=embedding_dim,
+            num_heads=num_heads, key_dim=embedding_dim
         )(x, x)
         x = layers.Add()([x, attention_output])  # Skip connection
         x = layers.LayerNormalization(epsilon=1e-6)(x)
@@ -182,7 +182,7 @@ def create_transformer_model(
     x = x[:, -1, :]
 
     # Output layer
-    outputs = layers.Dense(9)(x)  # No softmax here
+    outputs = layers.Dense(10)(x)  # No softmax here
 
     model = keras.Model(inputs=inputs, outputs=outputs)
     return model
@@ -212,12 +212,9 @@ def train_model(model, data, epochs=10, batch_size=32):
         total_loss = move_loss + reward_loss
         return total_loss
 
-    model.compile(
-        optimizer="adam",
-        loss=custom_loss,
-        metrics=["accuracy"],
-    )
+    model.compile(optimizer="adam", loss=custom_loss, metrics=["accuracy"])
     model.fit(X, y, epochs=epochs, batch_size=batch_size)
+    return model
 
 
 def predict_next_move(model, board_history):
@@ -232,9 +229,7 @@ def predict_next_move(model, board_history):
     ]  # trim the history if needed
 
     board_history_array = np.array(board_history).reshape(
-        1,
-        model.input_shape[1],
-        model.input_shape[2],
+        1, model.input_shape[1], model.input_shape[2]
     )
     predictions = model.predict(board_history_array)[0]
 
@@ -294,20 +289,141 @@ def play_game(model):
             break
 
 
-# --- Main Execution ---
+def save_data(data, filename):
+    with open(filename, "wb") as f:
+        pickle.dump(data, f)
+    print(f"Data saved to {filename}")
+
+
+def load_data(filename):
+    with open(filename, "rb") as f:
+        data = pickle.load(f)
+    print(f"Data loaded from {filename}")
+    return data
+
+
+def save_model(model, filename):
+    model.save(filename)
+    print(f"Model saved to {filename}")
+
+
+def load_model(filename):
+    model = keras.models.load_model(filename)
+    print(f"Model loaded from {filename}")
+    return model
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Tic-Tac-Toe AI")
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default="data",
+        help="Directory to store data and models",
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Sub-command help")
+
+    # Generate Data Subparser
+    generate_parser = subparsers.add_parser(
+        "generate", help="Generate training data"
+    )
+    generate_parser.add_argument(
+        "--num_games",
+        type=int,
+        default=50000,
+        help="Number of games to generate",
+    )
+    generate_parser.add_argument(
+        "--context_window",
+        type=int,
+        default=5,
+        help="Context window size for board history",
+    )
+    generate_parser.add_argument(
+        "--output_file",
+        type=str,
+        default="training_data.pkl",
+        help="Output file for training data",
+    )
+
+    # Train Model Subparser
+    train_parser = subparsers.add_parser("train", help="Train the model")
+    train_parser.add_argument(
+        "--input_file",
+        type=str,
+        default="training_data.pkl",
+        help="Input file for training data",
+    )
+    train_parser.add_argument(
+        "--epochs", type=int, default=10, help="Number of training epochs"
+    )
+    train_parser.add_argument(
+        "--batch_size", type=int, default=64, help="Batch size for training"
+    )
+    train_parser.add_argument(
+        "--context_window",
+        type=int,
+        default=5,
+        help="Context window size for board history",
+    )
+    train_parser.add_argument(
+        "--output_model",
+        type=str,
+        default="trained_model",
+        help="Output file for trained model",
+    )
+
+    # Play Game Subparser
+    play_parser = subparsers.add_parser("play", help="Play a game")
+    play_parser.add_argument(
+        "--model_file",
+        type=str,
+        default="trained_model",
+        help="Model file to use for playing",
+    )
+    play_parser.add_argument(
+        "--context_window",
+        type=int,
+        default=5,
+        help="Context window size for board history",
+    )
+
+    args = parser.parse_args()
+
+    # Create data directory if it doesn't exist
+    os.makedirs(args.data_dir, exist_ok=True)
+
+    if args.command == "generate":
+        print("Generating training data...")
+        training_data = generate_training_data(
+            args.num_games, args.context_window
+        )
+        output_path = os.path.join(args.data_dir, args.output_file)
+        save_data(training_data, output_path)
+
+    elif args.command == "train":
+        print("Training model...")
+        input_path = os.path.join(args.data_dir, args.input_file)
+        training_data = load_data(input_path)
+        model = create_transformer_model(context_window=args.context_window)
+        model = train_model(
+            model,
+            training_data,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+        )
+        output_path = os.path.join(args.data_dir, args.output_model)
+        save_model(model, output_path)
+
+    elif args.command == "play":
+        print("Playing game...")
+        model_path = os.path.join(args.data_dir, args.model_file)
+        model = load_model(model_path)
+        play_game(model)
+
+    else:
+        parser.print_help()
+
+
 if __name__ == "__main__":
-    # 1. Generate Data
-    print("Generating training data...")
-    training_data = generate_training_data(num_games=50000, context_window=5)
-
-    # 2. Create Model
-    print("Creating model...")
-    model = create_transformer_model(context_window=5)
-
-    # 3. Train Model
-    print("Training model...")
-    train_model(model, training_data, epochs=10, batch_size=64)
-
-    # 4. Test the model
-    print("\nTesting the model...")
-    play_game(model)
+    main()
