@@ -3,10 +3,12 @@ import os
 import pickle
 import random
 from dataclasses import dataclass
+from typing import List
 
 import numpy as np
 from tensorflow import keras
 from tensorflow.keras import layers
+from tensorflow.keras.callbacks import Callback
 
 
 @dataclass
@@ -82,8 +84,19 @@ class TicTacToe:
 
 
 def generate_training_data(num_games, context_window):
-    data = []
-    for _ in range(num_games):
+    data: List[TrainingExample] = []
+    wins = 0
+    losses = 0
+    draws = 0
+    report_interval = num_games // 100  # Report every 1%
+    if report_interval == 0:
+        report_interval = 1
+
+    for game_num in range(num_games):
+        if game_num % report_interval == 0:
+            print(
+                f"Generating game {game_num}/{num_games} - Wins: {wins}, Losses: {losses}, Draws: {draws}"
+            )
         game = TicTacToe()
         board_history = []
         game_moves = []  # Store moves made in the game
@@ -116,6 +129,12 @@ def generate_training_data(num_games, context_window):
             winner = game.check_winner()
             if winner != 0 or game.is_board_full():
                 reward = game.get_reward()
+                if reward == 1:
+                    wins += 1
+                elif reward == -1:
+                    losses += 1
+                else:
+                    draws += 1
                 for i, (row, col) in enumerate(game_moves):
                     # Assign reward to each move in the game
                     # For simplicity, we'll just use the end-of-game reward
@@ -124,9 +143,7 @@ def generate_training_data(num_games, context_window):
                     if game.current_player == 2:
                         data.append(
                             TrainingExample(
-                                board_history=np.array(
-                                    board_history[: len(game_moves) - i]
-                                ),
+                                board_history=np.array(board_history),
                                 move=row * 3 + col,
                                 reward=reward,
                             )
@@ -134,14 +151,20 @@ def generate_training_data(num_games, context_window):
                     else:
                         data.append(
                             TrainingExample(
-                                board_history=np.array(
-                                    board_history[: len(game_moves) - i]
-                                ),
+                                board_history=np.array(board_history),
                                 move=row * 3 + col,
                                 reward=-reward,
                             )
                         )
                 break
+    print(
+        f"Finished generating data. Total Wins: {wins}, Losses: {losses}, Draws: {draws}"
+    )
+    total_games = wins + losses + draws
+    if total_games > 0:
+        print(f"Win percentage: {wins / total_games * 100:.2f}%")
+        print(f"Loss percentage: {losses / total_games * 100:.2f}%")
+        print(f"Draw percentage: {draws / total_games * 100:.2f}%")
     return data
 
 
@@ -188,6 +211,13 @@ def create_transformer_model(
     return model
 
 
+class TrainingProgressCallback(Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        print(
+            f"Epoch {epoch+1} - loss: {logs['loss']:.4f}, accuracy: {logs['accuracy']:.4f}"
+        )
+
+
 def train_model(model, data, epochs=10, batch_size=32):
     X = np.array([example.board_history for example in data])
     y_move = np.array([example.move for example in data])
@@ -206,14 +236,23 @@ def train_model(model, data, epochs=10, batch_size=32):
         move_loss = keras.losses.sparse_categorical_crossentropy(
             move_true, move_pred
         )
-        reward_loss = keras.losses.mean_squared_error(reward_true, reward_pred)
 
-        # Combine losses (you can adjust the weights)
-        total_loss = move_loss + reward_loss
+        mse = keras.losses.MeanSquaredError()
+        reward_loss = mse(reward_true, reward_pred)
+
+        # Combine losses
+        total_loss = 0.05 * move_loss + 0.95 * reward_loss
         return total_loss
 
     model.compile(optimizer="adam", loss=custom_loss, metrics=["accuracy"])
-    model.fit(X, y, epochs=epochs, batch_size=batch_size)
+    progress_callback = TrainingProgressCallback()
+    model.fit(
+        X,
+        y,
+        epochs=epochs,
+        batch_size=batch_size,
+        callbacks=[progress_callback],
+    )
     return model
 
 
