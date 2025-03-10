@@ -2,6 +2,14 @@ import numpy as np
 import random
 from tensorflow import keras
 from tensorflow.keras import layers
+from dataclasses import dataclass
+
+
+@dataclass
+class TrainingExample:
+    board_history: np.ndarray
+    move: int
+    reward: int
 
 
 class TicTacToe:
@@ -111,18 +119,22 @@ def generate_training_data(num_games, context_window):
                     # intermediate rewards based on board state
                     if game.current_player == 2:
                         data.append(
-                            (
-                                np.array(board_history[: len(game_moves) - i]),
-                                row * 3 + col,
-                                reward,
+                            TrainingExample(
+                                board_history=np.array(
+                                    board_history[: len(game_moves) - i]
+                                ),
+                                move=row * 3 + col,
+                                reward=reward,
                             )
                         )
                     else:
                         data.append(
-                            (
-                                np.array(board_history[: len(game_moves) - i]),
-                                row * 3 + col,
-                                -reward,
+                            TrainingExample(
+                                board_history=np.array(
+                                    board_history[: len(game_moves) - i]
+                                ),
+                                move=row * 3 + col,
+                                reward=-reward,
                             )
                         )
                 break
@@ -170,20 +182,41 @@ def create_transformer_model(
     x = x[:, -1, :]
 
     # Output layer
-    outputs = layers.Dense(9, activation="softmax")(x)
+    outputs = layers.Dense(9)(x)  # No softmax here
 
     model = keras.Model(inputs=inputs, outputs=outputs)
-    model.compile(
-        optimizer="adam",
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"],
-    )
     return model
 
 
 def train_model(model, data, epochs=10, batch_size=32):
-    X = np.array([board_sequence for board_sequence, _, _ in data])
-    y = np.array([move for _, move, _ in data])
+    X = np.array([example.board_history for example in data])
+    y_move = np.array([example.move for example in data])
+    y_reward = np.array([example.reward for example in data])
+
+    # Combine move and reward into a single output
+    y = np.column_stack((y_move, y_reward))
+
+    # Custom loss function
+    def custom_loss(y_true, y_pred):
+        move_true = y_true[:, 0]
+        reward_true = y_true[:, 1]
+        move_pred = keras.activations.softmax(y_pred[:, :9])
+        reward_pred = y_pred[:, 9]
+
+        move_loss = keras.losses.sparse_categorical_crossentropy(
+            move_true, move_pred
+        )
+        reward_loss = keras.losses.mean_squared_error(reward_true, reward_pred)
+
+        # Combine losses (you can adjust the weights)
+        total_loss = move_loss + reward_loss
+        return total_loss
+
+    model.compile(
+        optimizer="adam",
+        loss=custom_loss,
+        metrics=["accuracy"],
+    )
     model.fit(X, y, epochs=epochs, batch_size=batch_size)
 
 
@@ -211,8 +244,10 @@ def predict_next_move(model, board_history):
     if len(valid_moves) == 0:
         return None
 
-    valid_predictions = predictions[valid_moves]
-    best_move_index = valid_moves[np.argmax(valid_predictions)]
+    # Get the move predictions
+    move_predictions = keras.activations.softmax(predictions[:9]).numpy()
+
+    best_move_index = valid_moves[np.argmax(move_predictions[valid_moves])]
 
     row = best_move_index // 3
     col = best_move_index % 3
