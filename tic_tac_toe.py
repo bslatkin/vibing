@@ -112,30 +112,33 @@ class GameStats:
 
 def calculate_reward(game, move_index, winner):
     """Calculates the reward for a move at a specific index in the game history."""
-
-    # Recreate the game state up to the move_index
+    # Recreate the game state up to the move_index and get the current player
     temp_game = TicTacToe()
     for i in range(move_index):
         row, col, _ = game.move_history[i]
-        temp_game.make_move(row, col)
+        assert temp_game.make_move(row, col)
 
-    row, col, player = game.move_history[move_index]
+    row, col, current_player = game.move_history[move_index]
 
-    # Check if the move wins the game for player 2
-    temp_game.make_move(row, col)
-    if temp_game.check_winner() == 2:
+    # Check if the move wins the game for the current player
+    assert temp_game.make_move(row, col)
+    if temp_game.check_winner() == current_player:
         return 1.0
 
-    # Check if the move blocks player 1 from winning next turn
-    temp_game.board[row, col] = 0
-    for r, c in itertools.product(range(3), range(3)):
-        if temp_game.board[r, c] == 0:
-            temp_game.board[r, c] = 1
-            if temp_game.check_winner() == 1:
-                return 1.0
-            temp_game.board[r, c] = 0
+    # Check if the move blocks the other player from winning next turn.
+    # Only do this if the game didn't end with the current move.
+    if temp_game.check_winner() == 0:
+        temp_game.board[row, col] = 0
+        other_player = 3 - current_player
+        for r, c in itertools.product(range(3), range(3)):
+            if temp_game.board[r, c] == 0:
+                temp_game.board[r, c] = other_player
+                if temp_game.check_winner() == other_player:
+                    return 1.0
+                temp_game.board[r, c] = 0
 
-    # If the move doesn't win or block a win, assign rewards based on the final outcome
+    # If the move doesn't win or block a win, assign rewards based on the
+    # final outcome relative to the current player
     if winner == 2:
         return 1
     elif winner == 1:
@@ -144,29 +147,32 @@ def calculate_reward(game, move_index, winner):
         return 0.5
 
 
-def create_training_examples(game, winner):
+def create_training_examples(game, winner, data):
     """Creates TrainingExample instances from a completed game."""
-    data = []
     for move_index, (row, col, player) in enumerate(game.move_history):
-        if player == 2:
-            # Create a copy of the board state before this move
-            board_state = game.board_history[move_index - 1].copy()
 
-            # Store the move as a single integer
-            move_index_int = row * 3 + col
+        # Create a copy of the board state before this move
+        if move_index == 0:
+            board_state = np.zeros((9,), dtype=int)
+        else:
+            board_state = game.board_history[move_index - 1]
 
-            reward = calculate_reward(game, move_index, winner)
-            data.append(
-                TrainingExample(
-                    board_state=board_state,
-                    move_one_hot=move_index_int,  # Changed here
-                    reward=reward,
-                )
+        # Store the move as a single integer
+        move_index_int = row * 3 + col
+
+        # Calculate reward relative to the player who made the move
+
+        reward = calculate_reward(game, move_index, winner)
+        data.append(
+            TrainingExample(
+                board_state=board_state,
+                move_one_hot=move_index_int,
+                reward=reward,
             )
-    return data
+        )
 
 
-def generate_all_games(game, data, second_player_stats):
+def generate_all_games(game, data, player_stats):
     """
     Recursively generates all possible Tic-Tac-Toe games and extracts training data.
     """
@@ -175,15 +181,15 @@ def generate_all_games(game, data, second_player_stats):
 
     winner = game.check_winner()
     if winner != 0 or game.is_board_full():
-
         if winner == 2:
-            second_player_stats.add_win()
+            player_stats[1].add_win()
         elif winner == 1:
-            second_player_stats.add_loss()
+            player_stats[0].add_win()
         else:
-            second_player_stats.add_draw()
+            player_stats[0].add_draw()
+            player_stats[1].add_draw()
 
-        data.extend(create_training_examples(game, winner))
+        create_training_examples(game, winner, data)
         return
 
     empty_cells = [
@@ -192,8 +198,8 @@ def generate_all_games(game, data, second_player_stats):
 
     for row, col in empty_cells:
         new_game = game.copy()
-        new_game.make_move(row, col)
-        generate_all_games(new_game, data, second_player_stats)
+        assert new_game.make_move(row, col)
+        generate_all_games(new_game, data, player_stats)
 
 
 def generate_training_data():
@@ -204,10 +210,11 @@ def generate_training_data():
 
     game = TicTacToe()
     data = []
-    second_player_stats = GameStats("Second")
-    generate_all_games(game, data, second_player_stats)
+    player_stats = [GameStats("First"), GameStats("Second")]
+    generate_all_games(game, data, player_stats)
     print("Finished generating data.")
-    print(second_player_stats)
+    print(player_stats[0])
+    print(player_stats[1])
     return data
 
 
@@ -256,9 +263,7 @@ class TestAccuracyCallback(Callback):
 
 def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     X = np.array([example.board_state for example in data])
-    y_move = np.array(
-        [example.move_one_hot for example in data]
-    )  # Changed here
+    y_move = np.array([example.move_one_hot for example in data])
     y_reward = np.array([example.reward for example in data])
 
     (
@@ -305,15 +310,13 @@ def predict_next_move(model, board_state):
     predictions = model.predict(board_state_array, verbose=0)
     move_predictions = predictions[0][0]
 
-    # Mask out invalid moves
-    valid_moves = np.where(board_state == 0)[0]
-    if len(valid_moves) == 0:
-        return None  # No valid moves
+    # Mask out invalid moves by setting their predictions to -inf
+    for i in range(len(board_state)):
+        if board_state[i] != 0:
+            move_predictions[i] = -np.inf
 
-    # Choose the best valid move
-    best_move_index = valid_moves[
-        np.argmax(move_predictions[valid_moves])
-    ]  # argmax on raw scores
+    # Choose the best move (highest prediction)
+    best_move_index = np.argmax(move_predictions)
     row = best_move_index // 3
     col = best_move_index % 3
     return row, col
@@ -325,14 +328,7 @@ def play_game(model):
         print("\nCurrent Board:")
         print(game.board)
 
-        if game.current_player == 2:
-            board_state = game.get_board_state().flatten()
-            predicted_move = predict_next_move(model, board_state)
-            row, col = predicted_move
-            print(f"Model (O) plays at: ({row}, {col})")
-            assert game.make_move(row, col)
-
-        elif game.current_player == 1:
+        if game.current_player == 1:
             # Human's turn
             while True:
                 try:
@@ -344,6 +340,12 @@ def play_game(model):
                         print("Invalid move. Try again.")
                 except ValueError:
                     print("Invalid input. Enter numbers between 0 and 2.")
+        else:
+            board_state = game.get_board_state().flatten()
+            predicted_move = predict_next_move(model, board_state)
+            row, col = predicted_move
+            print(f"Model (O) plays at: ({row}, {col})")
+            assert game.make_move(row, col)
 
         winner = game.check_winner()
         if winner != 0:
