@@ -35,11 +35,11 @@ class TicTacToe:
     def make_move(self, row, col):
         if self.is_valid_move(row, col):
             self.board[row, col] = self.current_player
+            self.move_history.append((row, col, self.current_player))
+            self.board_history.append(self.get_board_state().flatten())
             self.current_player = (
                 3 - self.current_player
             )  # Switch players (1 -> 2, 2 -> 1)
-            self.move_history.append((row, col, self.current_player))
-            self.board_history.append(self.get_board_state().flatten())
             return True
         return False
 
@@ -105,16 +105,23 @@ class GameStats:
         return f"Total Wins ({self.name}): {self.wins}, Losses ({self.name}): {self.losses}, Draws ({self.name}): {self.draws}, Win percentage ({self.name}): {win_percentage:.2f}%"
 
 
-def calculate_reward(game, row, col, winner):
-    """Calculates the reward for a move."""
+def calculate_reward(game, move_index, winner):
+    """Calculates the reward for a move at a specific index in the game history."""
+
+    # Recreate the game state up to the move_index
+    temp_game = TicTacToe()
+    for i in range(move_index):
+        row, col, _ = game.move_history[i]
+        temp_game.make_move(row, col)
+
+    row, col, _ = game.move_history[move_index]
+
+    # Make the move we are evaluating
+    temp_game.make_move(row, col)
 
     reward = 1 if winner == 2 else -1
 
     # Check if the move wins the game
-    temp_game = TicTacToe()
-    temp_game.board = game.board.copy()
-    temp_game.current_player = game.current_player
-    temp_game.make_move(row, col)
     if temp_game.check_winner() == 2:
         reward += 1
 
@@ -175,7 +182,7 @@ def create_training_examples(game, winner):
                 x.copy() for x in padded_history[-CONTEXT_WINDOW:]
             ]
 
-            reward = calculate_reward(game, row, col, winner)
+            reward = calculate_reward(game, i, winner)
             data.append(
                 TrainingExample(
                     board_history=np.array(padded_board_history),
@@ -211,19 +218,19 @@ def generate_training_data(num_games):
             if not empty_cells:
                 break
             row, col = random.choice(empty_cells)
-            if game.make_move(row, col):
-                winner = game.check_winner()
-                if winner != 0 or game.is_board_full():
-                    if winner == 2:
-                        second_player_stats.add_win()
-                    elif winner == 1:
-                        second_player_stats.add_loss()
-                    else:
-                        second_player_stats.add_draw()
+            assert game.make_move(row, col)
+            winner = game.check_winner()
+            if winner != 0 or game.is_board_full():
+                if winner == 2:
+                    second_player_stats.add_win()
+                elif winner == 1:
+                    second_player_stats.add_loss()
+                else:
+                    second_player_stats.add_draw()
 
-                    data.extend(create_training_examples(game, winner))
+                data.extend(create_training_examples(game, winner))
 
-                    break
+                break
     print("Finished generating data.")
 
     print(second_player_stats)
@@ -393,7 +400,7 @@ def play_game(model):
             )
             row, col = predicted_move
             print(f"Model (O) plays at: ({row}, {col})")
-            game.make_move(row, col)
+            assert game.make_move(row, col)
 
         elif game.current_player == 1:
             # Human's turn
@@ -451,11 +458,10 @@ def inspect_data(data):
     row = move_index // 3
     col = move_index % 3
 
+    # Simulate the move and print the resulting board state
     print(f"Player 2 Move: ({row}, {col})")
     print(f"Reward: {random_example.reward}")
     print("-" * 20)
-
-    print("Finished inspecting data.")
 
 
 def save_model(model, filename):
