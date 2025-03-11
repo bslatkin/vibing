@@ -116,10 +116,15 @@ def calculate_reward(game, move_index, winner):
 
     row, col, _ = game.move_history[move_index]
 
+    if winner == 2:
+        reward = 2
+    elif winner == 1:
+        reward = -1
+    else:
+        reward = 1
+
     # Make the move we are evaluating
     temp_game.make_move(row, col)
-
-    reward = 1 if winner == 2 else -1
 
     # Check if the move wins the game
     if temp_game.check_winner() == 2:
@@ -146,26 +151,26 @@ def calculate_reward(game, move_index, winner):
                     reward += 1
                 temp_game.board[r, c] = 0
 
-    # Check if the move allows player 1 to win in the next turn
-    for r in range(3):
-        for c in range(3):
-            if temp_game.board[r, c] == 0:
-                temp_game.board[r, c] = 1
-                if temp_game.check_winner() == 1:
-                    reward += -1
-                temp_game.board[r, c] = 0
+    # # Check if the move allows player 1 to win in the next turn
+    # for r in range(3):
+    #     for c in range(3):
+    #         if temp_game.board[r, c] == 0:
+    #             temp_game.board[r, c] = 1
+    #             if temp_game.check_winner() == 1:
+    #                 reward += -1
+    #             temp_game.board[r, c] = 0
 
-    # Check if the move allows player 1 to get two in a row in the next turn
-    for r in range(3):
-        for c in range(3):
-            if temp_game.board[r, c] == 1:
-                for dr, dc in [(0, 1), (1, 0), (1, 1), (1, -1)]:
-                    if (
-                        0 <= r + dr < 3
-                        and 0 <= c + dc < 3
-                        and temp_game.board[r + dr, c + dc] == 1
-                    ):
-                        reward += -1
+    # # Check if the move allows player 1 to get two in a row in the next turn
+    # for r in range(3):
+    #     for c in range(3):
+    #         if temp_game.board[r, c] == 1:
+    #             for dr, dc in [(0, 1), (1, 0), (1, 1), (1, -1)]:
+    #                 if (
+    #                     0 <= r + dr < 3
+    #                     and 0 <= c + dc < 3
+    #                     and temp_game.board[r + dr, c + dc] == 1
+    #                 ):
+    #                     reward += -1
 
     return reward
 
@@ -324,7 +329,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.05):
             "move_output": "sparse_categorical_crossentropy",
             "reward_output": "mse",
         },
-        loss_weights={"move_output": 0.2, "reward_output": 0.8},
+        loss_weights={"move_output": 0.1, "reward_output": 0.9},
         metrics={"move_output": "accuracy"},
     )
 
