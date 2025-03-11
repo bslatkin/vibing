@@ -300,13 +300,20 @@ def predict_next_move(model, board_state):
     return row, col
 
 
-def play_game(model):
+def play_game(model, human_player):
     game = TicTacToe()
+
     while True:
         print("\nCurrent Board:")
         print(game.board)
 
-        if game.current_player == 1:
+        if game.current_player == human_player:
+
+            if human_player == 1:
+                print("Your turn (X)")
+            else:
+                print("Your turn (O)")
+
             # Human's turn
             while True:
                 try:
@@ -319,18 +326,25 @@ def play_game(model):
                 except ValueError:
                     print("Invalid input. Enter numbers between 0 and 2.")
         else:
+            if game.current_player == 1:
+                print("Model (X) is thinking...")
+            else:
+                print("Model (O) is thinking...")
+
             board_state = game.get_board_state().flatten()
             predicted_move = predict_next_move(model, board_state)
             row, col = predicted_move
-            print(f"Model (O) plays at: ({row}, {col})")
+            print(f"Model plays at: ({row}, {col})")
             assert game.make_move(row, col)
 
         winner = game.check_winner()
         if winner != 0:
             print(f"Player {winner} wins!")
+            print(game.board)
             break
         elif game.is_board_full():
             print("It's a draw!")
+            print(game.board)
             break
 
 
@@ -441,6 +455,13 @@ def main():
         default="trained_model.keras",
         help="Model file to use for playing",
     )
+    play_parser.add_argument(
+        "--human_player",
+        type=int,
+        default=1,
+        choices=[1, 2],
+        help="Which player is the human? 1 for X, 2 for O",
+    )
 
     args = parser.parse_args()
 
@@ -476,7 +497,7 @@ def main():
         print("Playing game...")
         model_path = os.path.join(args.data_dir, args.model_file)
         model = load_model(model_path)
-        play_game(model)
+        play_game(model, args.human_player)
 
     else:
         parser.print_help()
