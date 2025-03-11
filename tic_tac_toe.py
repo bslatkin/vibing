@@ -72,8 +72,6 @@ class TicTacToe:
                     max_touching = max(max_touching, touching)
         return max_touching
 
-        pass
-
     def check_winner(self):
         # Check rows
         for row in self.board:
@@ -192,19 +190,25 @@ def calculate_reward(game, move_index):
     if before_count and after_count > before_count:
         player_more_touching = True
 
+    winner = game.check_winner()
+
     if player_wins:
         return 1
     elif opponent_will_win:
         return -1
-    elif player_more_touching:
-        return 0.5
-    elif opponent_more_touching:
-        return -0.5
+    # elif player_more_touching:
+    #     return 0.5
+    # elif opponent_more_touching:
+    #     return -0.5
+    elif player == winner:
+        return 0.1
+    elif opponent == winner:
+        return -0.1
     else:
         return 0
 
 
-def create_training_examples(game, winner, data):
+def create_training_examples(game, data):
     """Creates TrainingExample instances from a completed game."""
     for move_index, (row, col, player) in enumerate(game.move_history):
         # Get the board state before this move
@@ -244,7 +248,7 @@ def generate_all_games(game, data, player_stats):
             player_stats[0].add_draw()
             player_stats[1].add_draw()
 
-        create_training_examples(game, winner, data)
+        create_training_examples(game, data)
         return
 
     empty_cells = [
