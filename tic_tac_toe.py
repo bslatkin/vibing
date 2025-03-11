@@ -78,29 +78,6 @@ class TicTacToe:
         return self.board.copy()
 
 
-def is_two_in_a_row(board, player):
-    """Checks if there are two adjacent cells in a row, column, or diagonal for the given player."""
-    # Check rows
-    for row in board:
-        for i in range(2):
-            if row[i] == player and row[i + 1] == player:
-                return True
-    # Check columns
-    for col in range(3):
-        for i in range(2):
-            if board[i, col] == player and board[i + 1, col] == player:
-                return True
-    # Check diagonals
-    if (
-        (board[0, 0] == player and board[1, 1] == player)
-        or (board[1, 1] == player and board[2, 2] == player)
-        or (board[0, 2] == player and board[1, 1] == player)
-        or (board[1, 1] == player and board[2, 0] == player)
-    ):
-        return True
-    return False
-
-
 class GameStats:
     def __init__(self, name):
         self.name = name
@@ -125,6 +102,43 @@ class GameStats:
         return f"Total Wins ({self.name}): {self.wins}, Losses ({self.name}): {self.losses}, Draws ({self.name}): {self.draws}, Win percentage ({self.name}): {win_percentage:.2f}%"
 
 
+def calculate_reward(game, row, col, move_player):
+    """Calculates the reward for a move."""
+    if move_player != 2:
+        return 0
+
+    # Check if the move wins the game
+    temp_game = TicTacToe()
+    temp_game.board = game.board.copy()
+    temp_game.current_player = game.current_player
+    temp_game.make_move(row, col)
+    if temp_game.check_winner() == 2:
+        return 1
+
+    # Check if the move creates two in a row for player 2
+    for r in range(3):
+        for c in range(3):
+            if temp_game.board[r, c] == 2:
+                for dr, dc in [(0, 1), (1, 0), (1, 1), (1, -1)]:
+                    if (
+                        0 <= r + dr < 3
+                        and 0 <= c + dc < 3
+                        and temp_game.board[r + dr, c + dc] == 2
+                    ):
+                        return 1
+
+    # Check if the move blocks player 1 from winning
+    for r in range(3):
+        for c in range(3):
+            if temp_game.board[r, c] == 0:
+                temp_game.board[r, c] = 1
+                if temp_game.check_winner() == 1:
+                    return 1
+                temp_game.board[r, c] = 0
+
+    return 0
+
+
 def create_training_examples(game, winner, context_window):
     """Creates TrainingExample instances from a completed game."""
     data: List[TrainingExample] = []
@@ -137,13 +151,7 @@ def create_training_examples(game, winner, context_window):
                 x.copy() for x in padded_history[-context_window:]
             ]
 
-            if winner == 2:
-                reward = 1
-            elif winner == 1:
-                reward = 0
-            else:
-                reward = 0.5
-
+            reward = calculate_reward(game, row, col, move_player)
             data.append(
                 TrainingExample(
                     board_history=np.array(padded_board_history),
