@@ -22,6 +22,8 @@ class TicTacToe:
     def __init__(self):
         self.board = np.zeros((3, 3), dtype=int)
         self.current_player = 1  # Player X starts
+        self.move_history = []
+        self.board_history = []
 
     def is_valid_move(self, row, col):
         return 0 <= row < 3 and 0 <= col < 3 and self.board[row, col] == 0
@@ -32,6 +34,8 @@ class TicTacToe:
             self.current_player = (
                 3 - self.current_player
             )  # Switch players (1 -> 2, 2 -> 1)
+            self.move_history.append((row, col, self.current_player))
+            self.board_history.append(self.get_board_state().flatten())
             return True
         return False
 
@@ -66,21 +70,11 @@ class TicTacToe:
     def reset(self):
         self.board = np.zeros((3, 3), dtype=int)
         self.current_player = 1
+        self.move_history = []
+        self.board_history = []
 
     def get_board_state(self):
         return self.board.copy()
-
-    def get_reward(self):
-        """A simple reward function for Tic-Tac-Toe."""
-        winner = self.check_winner()
-        if winner == 1:
-            return 1  # Player 1 (X) win
-        elif winner == 2:
-            return -1  # Player 2 (O) win
-        elif self.is_board_full():
-            return 0  # Draw
-        else:
-            return 0  # No reward yet
 
 
 class GameStats:
@@ -113,18 +107,15 @@ def generate_training_data(num_games, context_window):
     if report_interval == 0:
         report_interval = 1
 
-    first_player_stats = GameStats("First")
     second_player_stats = GameStats("Second")
 
     for game_num in range(num_games):
         if game_num % report_interval == 0:
             print(
-                f"Generating game {game_num}/{num_games} - {first_player_stats}, {second_player_stats}"
+                f"Generating game {game_num}/{num_games} - {second_player_stats}"
             )
         game = TicTacToe()
-        board_history = []
-        game_moves = []
-        current_player = 1
+
         while True:
             empty_cells = [
                 (r, c)
@@ -136,51 +127,47 @@ def generate_training_data(num_games, context_window):
                 break
             row, col = random.choice(empty_cells)
             if game.make_move(row, col):
-                game_moves.append((row, col, current_player))
-                board_state = game.get_board_state().flatten()
-                board_history.append(board_state)
-                current_player = 3 - current_player
-
                 winner = game.check_winner()
                 if winner != 0 or game.is_board_full():
-                    reward = game.get_reward()
                     if winner == 2:
                         second_player_stats.add_win()
                     elif winner == 1:
-                        first_player_stats.add_loss()
+                        second_player_stats.add_loss()
                     else:
-                        first_player_stats.add_draw()
                         second_player_stats.add_draw()
 
-                    for i, (row, col, move_player) in enumerate(game_moves):
+                    for i, (row, col, move_player) in enumerate(
+                        game.move_history
+                    ):
                         if move_player == 2:
                             padded_history = [np.zeros(9)] * (
                                 context_window - min(context_window, i + 1)
-                            ) + board_history[: i + 1]
-                            padded_board_history = padded_history[
-                                -context_window:
+                            ) + [x.copy() for x in game.board_history[: i + 1]]
+                            padded_board_history = [
+                                x.copy()
+                                for x in padded_history[-context_window:]
                             ]
 
-                            reward = 0
-                            if winner != 0:
-                                if winner == move_player:
-                                    reward = 1
-                                else:
-                                    reward = -1
+                            if winner == 2:
+                                reward = 1
+                            elif winner == 1:
+                                reward = -1
                             else:
                                 reward = 0
 
-                    data.append(
-                        TrainingExample(
-                            board_history=np.array(padded_board_history),
-                            move=row * 3 + col,
-                            reward=reward,
-                        )
-                    )
+                            data.append(
+                                TrainingExample(
+                                    board_history=np.array(
+                                        padded_board_history
+                                    ),
+                                    move=row * 3 + col,
+                                    reward=reward,
+                                )
+                            )
+
                     break
     print("Finished generating data.")
 
-    print(first_player_stats)
     print(second_player_stats)
     return data
 
