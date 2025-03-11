@@ -132,7 +132,7 @@ def calculate_reward(game, move_index, winner):
         if temp_game.board[r, c] == 0:
             temp_game.board[r, c] = 1
             if temp_game.check_winner() == 1:
-                return -1.0
+                return 1.0
             temp_game.board[r, c] = 0
 
     # If the move doesn't win or block a win, assign rewards based on the final outcome
@@ -278,7 +278,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
             "move_output": "sparse_categorical_crossentropy",  # This is correct now
             "reward_output": "mse",
         },
-        loss_weights={"move_output": 0.3, "reward_output": 0.7},
+        loss_weights={"move_output": 0.7, "reward_output": 0.3},
         metrics={"move_output": "accuracy"},
     )
 
@@ -339,7 +339,6 @@ def play_game(model):
                     row = int(input("Enter row (0-2): "))
                     col = int(input("Enter column (0-2): "))
                     if game.make_move(row, col):
-                        board_history.append(game.get_board_state().flatten())
                         break
                     else:
                         print("Invalid move. Try again.")
