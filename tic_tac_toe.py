@@ -31,14 +31,18 @@ class TicTacToe:
 
     def make_move(self, row, col):
         if self.is_valid_move(row, col):
-            self.board[row, col] = self.current_player
+            # Save the current state of the board
             self.move_history.append((row, col, self.current_player))
             self.board_history.append(self.get_board_state().flatten())
+
+            # Update the state of the board based on the move
+            self.board[row, col] = self.current_player
             self.current_player = (
                 3 - self.current_player
             )  # Switch players (1 -> 2, 2 -> 1)
             return True
-        return False
+        else:
+            return False
 
     def check_winner(self):
         # Check rows
@@ -112,57 +116,29 @@ class GameStats:
 
 def calculate_reward(game, move_index, winner):
     """Calculates the reward for a move at a specific index in the game history."""
-    # Recreate the game state up to the move_index and get the current player
-    temp_game = TicTacToe()
-    for i in range(move_index):
-        row, col, _ = game.move_history[i]
-        assert temp_game.make_move(row, col)
-
-    row, col, current_player = game.move_history[move_index]
-
-    # Check if the move wins the game for the current player
-    assert temp_game.make_move(row, col)
-    if temp_game.check_winner() == current_player:
-        return 1.0
-
-    # Check if the move blocks the other player from winning next turn.
-    # Only do this if the game didn't end with the current move.
-    if temp_game.check_winner() == 0:
-        temp_game.board[row, col] = 0
-        other_player = 3 - current_player
-        for r, c in itertools.product(range(3), range(3)):
-            if temp_game.board[r, c] == 0:
-                temp_game.board[r, c] = other_player
-                if temp_game.check_winner() == other_player:
-                    return 1.0
-                temp_game.board[r, c] = 0
-
-    # If the move doesn't win or block a win, assign rewards based on the
-    # final outcome relative to the current player
-    if winner == 2:
+    # Assign rewards based on the final outcome relative to the current player
+    _, _, current_player = game.move_history[move_index]
+    winner = game.check_winner()
+    if winner == current_player:
         return 1
-    elif winner == 1:
-        return -1
-    else:
+    elif winner == 0:
         return 0.5
+    else:
+        return -1
 
 
 def create_training_examples(game, winner, data):
     """Creates TrainingExample instances from a completed game."""
     for move_index, (row, col, player) in enumerate(game.move_history):
-
-        # Create a copy of the board state before this move
-        if move_index == 0:
-            board_state = np.zeros((9,), dtype=int)
-        else:
-            board_state = game.board_history[move_index - 1]
+        # Get the board state before this move
+        board_state = game.board_history[move_index]
 
         # Store the move as a single integer
         move_index_int = row * 3 + col
 
         # Calculate reward relative to the player who made the move
-
         reward = calculate_reward(game, move_index, winner)
+
         data.append(
             TrainingExample(
                 board_state=board_state,
@@ -182,9 +158,11 @@ def generate_all_games(game, data, player_stats):
     winner = game.check_winner()
     if winner != 0 or game.is_board_full():
         if winner == 2:
+            player_stats[0].add_loss()
             player_stats[1].add_win()
         elif winner == 1:
             player_stats[0].add_win()
+            player_stats[1].add_loss()
         else:
             player_stats[0].add_draw()
             player_stats[1].add_draw()
@@ -280,10 +258,10 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     model.compile(
         optimizer="adam",
         loss={
-            "move_output": "sparse_categorical_crossentropy",  # This is correct now
+            "move_output": "sparse_categorical_crossentropy",
             "reward_output": "mse",
         },
-        loss_weights={"move_output": 0.7, "reward_output": 0.3},
+        loss_weights={"move_output": 0.1, "reward_output": 0.9},
         metrics={"move_output": "accuracy"},
     )
 
@@ -433,10 +411,10 @@ def main():
         help="Input file for training data",
     )
     train_parser.add_argument(
-        "--epochs", type=int, default=10, help="Number of training epochs"
+        "--epochs", type=int, default=3, help="Number of training epochs"
     )
     train_parser.add_argument(
-        "--batch_size", type=int, default=128, help="Batch size for training"
+        "--batch_size", type=int, default=1024, help="Batch size for training"
     )
     train_parser.add_argument(
         "--output_model",
