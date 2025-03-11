@@ -106,6 +106,7 @@ def calculate_reward(game, row, col, move_player):
     """Calculates the reward for a move."""
     if move_player != 2:
         return 0
+    reward = 0
 
     # Check if the move wins the game
     temp_game = TicTacToe()
@@ -113,7 +114,7 @@ def calculate_reward(game, row, col, move_player):
     temp_game.current_player = game.current_player
     temp_game.make_move(row, col)
     if temp_game.check_winner() == 2:
-        return 1
+        reward = 1
 
     # Check if the move creates two in a row for player 2
     for r in range(3):
@@ -125,7 +126,7 @@ def calculate_reward(game, row, col, move_player):
                         and 0 <= c + dc < 3
                         and temp_game.board[r + dr, c + dc] == 2
                     ):
-                        return 1
+                        reward = 1
 
     # Check if the move blocks player 1 from winning
     for r in range(3):
@@ -133,10 +134,31 @@ def calculate_reward(game, row, col, move_player):
             if temp_game.board[r, c] == 0:
                 temp_game.board[r, c] = 1
                 if temp_game.check_winner() == 1:
-                    return 1
+                    reward = 1
                 temp_game.board[r, c] = 0
 
-    return 0
+    # Check if the move allows player 1 to win in the next turn
+    for r in range(3):
+        for c in range(3):
+            if temp_game.board[r, c] == 0:
+                temp_game.board[r, c] = 1
+                if temp_game.check_winner() == 1:
+                    reward = -1
+                temp_game.board[r, c] = 0
+
+    # Check if the move allows player 1 to get two in a row in the next turn
+    for r in range(3):
+        for c in range(3):
+            if temp_game.board[r, c] == 1:
+                for dr, dc in [(0, 1), (1, 0), (1, 1), (1, -1)]:
+                    if (
+                        0 <= r + dr < 3
+                        and 0 <= c + dc < 3
+                        and temp_game.board[r + dr, c + dc] == 1
+                    ):
+                        reward = -1
+
+    return reward
 
 
 def create_training_examples(game, winner, context_window):
