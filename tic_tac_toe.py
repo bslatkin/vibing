@@ -148,16 +148,6 @@ def generate_training_data(num_games, context_window):
             if winner != 0 or game.is_board_full():
                 reward = game.get_reward()
 
-                # Pad board history for uniform input
-                padded_board_history = []
-                for i in range(len(board_history)):
-                    padded_history = [np.zeros(9)] * (
-                        context_window - min(context_window, i + 1)
-                    ) + board_history[: i + 1]
-                    padded_board_history.append(
-                        padded_history[-context_window:]
-                    )
-
                 if winner == first_player:
                     (
                         first_player_stats
@@ -178,6 +168,12 @@ def generate_training_data(num_games, context_window):
                     ).add_draw()
 
                 for i, (row, col, move_player) in enumerate(game_moves):
+                    # Pad board history for uniform input
+                    padded_history = [np.zeros(9)] * (
+                        context_window - min(context_window, i + 1)
+                    ) + board_history[: i + 1]
+                    padded_board_history = padded_history[-context_window:]
+
                     # Assign reward to each move based on the outcome
                     reward = 0
                     if winner != 0:
@@ -194,7 +190,7 @@ def generate_training_data(num_games, context_window):
 
                     data.append(
                         TrainingExample(
-                            board_history=np.array(padded_board_history[i]),
+                            board_history=np.array(padded_board_history),
                             move=row * 3 + col,
                             reward=reward,
                         )
