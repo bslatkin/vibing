@@ -273,18 +273,10 @@ def create_transformer_model(
     # Take the last state in the sequence (current state)
     x = x[:, -1, :]
 
-    # Output layer
-    outputs = layers.Dense(10)(x)  # No softmax here
-
-    model = keras.Model(inputs=inputs, outputs=outputs)
+    move_outputs = layers.Dense(9, activation="softmax", name="move_output")(x)
+    reward_outputs = layers.Dense(1, name="reward_output")(x)
+    model = keras.Model(inputs=inputs, outputs=[move_outputs, reward_outputs])
     return model
-
-
-class TrainingProgressCallback(Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        print(
-            f"Epoch {epoch+1} - loss: {logs['loss']:.4f}, accuracy: {logs['accuracy']:.4f}"
-        )
 
 
 def train_model(model, data, epochs=10, batch_size=32):
@@ -299,8 +291,8 @@ def train_model(model, data, epochs=10, batch_size=32):
     def custom_loss(y_true, y_pred):
         move_true = y_true[:, 0]
         reward_true = y_true[:, 1]
-        move_pred = keras.activations.softmax(y_pred[:, :9])
-        reward_pred = y_pred[:, 9]
+        move_pred = y_pred[0]
+        reward_pred = y_pred[1]
 
         move_loss = keras.losses.sparse_categorical_crossentropy(
             move_true, move_pred
@@ -310,17 +302,27 @@ def train_model(model, data, epochs=10, batch_size=32):
         reward_loss = mse(reward_true, reward_pred)
 
         # Combine losses
-        total_loss = 0.9 * move_loss + 0.1 * reward_loss
+        total_loss = 0.7 * move_loss + 0.3 * reward_loss
         return total_loss
 
-    model.compile(optimizer="adam", loss=custom_loss, metrics=["accuracy"])
-    progress_callback = TrainingProgressCallback()
+    model.compile(
+        optimizer="adam",
+        loss={
+            "move_output": "sparse_categorical_crossentropy",
+            "reward_output": "mse",
+        },
+        loss_weights={"move_output": 0.7, "reward_output": 0.3},
+        metrics={"move_output": "accuracy"},
+    )
+    y_move = np.array([example.move for example in data])
+    y_reward = np.array([example.reward for example in data])
+    y = np.column_stack((y_move, y_reward))
     model.fit(
         X,
-        y,
+        {"move_output": y_move, "reward_output": y_reward},
         epochs=epochs,
         batch_size=batch_size,
-        callbacks=[progress_callback],
+        callbacks=[],
     )
     return model
 
