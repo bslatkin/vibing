@@ -342,7 +342,10 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
 
     model.compile(
         optimizer="adam",
-        loss={"move_output": "binary_crossentropy", "reward_output": "mse"},
+        loss={
+            "move_output": "categorical_crossentropy",
+            "reward_output": "mse",
+        },
         loss_weights={"move_output": 0.5, "reward_output": 0.5},
         metrics={"move_output": "accuracy", "reward_output": "mse"},
     )
@@ -389,8 +392,8 @@ def predict_next_move(model, board_state, game):
         else:
             print(f"  ({row}, {col}): Invalid")
 
-    # Choose a move based on weighted probabilities
-    move_index = np.random.choice(9, p=move_probabilities)
+    # Choose the move with the highest probability
+    move_index = np.argmax(move_probabilities)
     return move_index // 3, move_index % 3
 
 
@@ -525,7 +528,7 @@ def main():
         "--epochs", type=int, default=3, help="Number of training epochs"
     )
     train_parser.add_argument(
-        "--batch_size", type=int, default=1024, help="Batch size for training"
+        "--batch_size", type=int, default=32, help="Batch size for training"
     )
     train_parser.add_argument(
         "--output_model",
