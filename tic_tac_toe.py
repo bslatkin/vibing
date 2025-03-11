@@ -80,6 +80,14 @@ class TicTacToe:
     def get_board_state(self):
         return self.board.copy()
 
+    def copy(self):
+        new_game = TicTacToe()
+        new_game.board = self.board.copy()
+        new_game.current_player = self.current_player
+        new_game.move_history = self.move_history[:]
+        new_game.board_history = self.board_history[:]
+        return new_game
+
 
 class GameStats:
     def __init__(self, name):
@@ -174,46 +182,48 @@ def create_training_examples(game, winner):
     return data
 
 
-def generate_training_data(num_games):
-    data: List[TrainingExample] = []
-    report_interval = num_games // 100  # Report every 1%
-    if report_interval == 0:
-        report_interval = 1
+def generate_all_games(game, data, second_player_stats):
+    """
+    Recursively generates all possible Tic-Tac-Toe games and extracts training data.
+    """
+    winner = game.check_winner()
+    if winner != 0 or game.is_board_full():
+        if winner == 2:
+            second_player_stats.add_win()
+        elif winner == 1:
+            second_player_stats.add_loss()
+        else:
+            second_player_stats.add_draw()
 
+        data.extend(create_training_examples(game, winner))
+        return
+
+    empty_cells = [
+        (r, c) for r in range(3) for c in range(3) if game.board[r, c] == 0
+    ]
+
+    for row, col in empty_cells:
+        new_game = game.copy()
+        new_game.make_move(row, col)
+        generate_all_games(new_game, data, second_player_stats)
+
+
+def generate_training_data():
+    """
+    Generates training data by enumerating all possible Tic-Tac-Toe games.
+    """
+    print("Generating all possible games...")
+
+    game = TicTacToe()
+    data = []
     second_player_stats = GameStats("Second")
 
-    for game_num in range(num_games):
-        if game_num % report_interval == 0:
-            print(
-                f"Generating game {game_num}/{num_games} - {second_player_stats}"
-            )
-        game = TicTacToe()
-
-        while True:
-            empty_cells = [
-                (r, c)
-                for r in range(3)
-                for c in range(3)
-                if game.board[r, c] == 0
-            ]
-            if not empty_cells:
-                break
-            row, col = random.choice(empty_cells)
-            assert game.make_move(row, col)
-            winner = game.check_winner()
-            if winner != 0 or game.is_board_full():
-                if winner == 2:
-                    second_player_stats.add_win()
-                elif winner == 1:
-                    second_player_stats.add_loss()
-                else:
-                    second_player_stats.add_draw()
-
-                data.extend(create_training_examples(game, winner))
-
-                break
+    data, second_player_stats = generate_all_games(
+        game,
+        data,
+        second_player_stats,
+    )
     print("Finished generating data.")
-
     print(second_player_stats)
     return data
 
@@ -471,12 +481,6 @@ def main():
         "generate", help="Generate training data"
     )
     generate_parser.add_argument(
-        "--num_games",
-        type=int,
-        default=50_000,
-        help="Number of games to generate",
-    )
-    generate_parser.add_argument(
         "--output_file",
         type=str,
         default="training_data.pkl",
@@ -530,7 +534,7 @@ def main():
 
     if args.command == "generate":
         print("Generating training data...")
-        training_data = generate_training_data(args.num_games)
+        training_data = generate_training_data()
         output_path = os.path.join(args.data_dir, args.output_file)
         save_data(training_data, output_path)
 
