@@ -242,7 +242,7 @@ def generate_training_data(num_games):
     return data
 
 
-def create_transformer_model(embedding_dim=16, num_heads=2, ff_dim=32):
+def create_transformer_model(embedding_dim=9, num_heads=2, ff_dim=18):
     """Creates a Transformer model for Tic-Tac-Toe with a context window."""
 
     inputs = keras.Input(shape=(CONTEXT_WINDOW, 9))  # Sequence of board states
