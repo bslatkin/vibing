@@ -133,16 +133,16 @@ def create_training_examples(game, winner, data):
         # Get the board state before this move
         board_state = game.board_history[move_index]
 
-        # Store the move as a single integer
-        move_index_int = row * 3 + col
+        # Create a one-hot vector for the move
+        move_one_hot = np.zeros(9)
+        move_one_hot[row * 3 + col] = 1
 
         # Calculate reward relative to the player who made the move
         reward = calculate_reward(game, move_index, winner)
-
         data.append(
             TrainingExample(
                 board_state=board_state,
-                move_one_hot=move_index_int,
+                move_one_hot=move_one_hot,
                 reward=reward,
             )
         )
@@ -202,12 +202,13 @@ def create_model():
     x = layers.Dense(64, activation="relu")(board_input)
     x = layers.Dense(32, activation="relu")(x)
 
-    move_output = layers.Dense(9, name="move_output")(x)  # Removed softmax
+    move_output = layers.Dense(9, activation="sigmoid", name="move_output")(x)
     reward_output = layers.Dense(1, activation="tanh", name="reward_output")(x)
 
     model = keras.Model(
         inputs=board_input, outputs=[move_output, reward_output]
     )
+
     return model
 
 
@@ -257,12 +258,9 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
 
     model.compile(
         optimizer="adam",
-        loss={
-            "move_output": "sparse_categorical_crossentropy",
-            "reward_output": "mse",
-        },
-        loss_weights={"move_output": 0.1, "reward_output": 0.9},
-        metrics={"move_output": "accuracy"},
+        loss={"move_output": "binary_crossentropy", "reward_output": "mse"},
+        loss_weights={"move_output": 0.5, "reward_output": 0.5},
+        metrics={"move_output": "accuracy", "reward_output": "mse"},
     )
 
     test_accuracy_callback = TestAccuracyCallback(
@@ -282,22 +280,34 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     return model
 
 
-def predict_next_move(model, board_state):
-    """Predicts the next move based on the current board state."""
+def predict_next_move(model, board_state, game):
+    """Predicts the next move based on the current board state using a weighted coin flip."""
     board_state_array = np.array(board_state).reshape(1, 9)
     predictions = model.predict(board_state_array, verbose=0)
-    move_predictions = predictions[0][0]
+    move_probabilities = predictions[0][0]  # Extract the move probabilities
 
-    # Mask out invalid moves by setting their predictions to -inf
-    for i in range(len(board_state)):
-        if board_state[i] != 0:
-            move_predictions[i] = -np.inf
+    # Mask out invalid moves
+    for i in range(9):
+        row, col = one_hot_to_move(i)
+        if not game.is_valid_move(row, col):
+            move_probabilities[i] = 0  # Set probability to 0 for invalid moves
 
-    # Choose the best move (highest prediction)
-    best_move_index = np.argmax(move_predictions)
-    row = best_move_index // 3
-    col = best_move_index % 3
-    return row, col
+    # Normalize probabilities to sum to 1 (if there are any valid moves)
+    if np.sum(move_probabilities) > 0:
+        move_probabilities /= np.sum(move_probabilities)
+
+    # Print probabilities for all moves
+    print("Move Probabilities:")
+    for i in range(9):
+        row, col = one_hot_to_move(i)
+        if game.is_valid_move(row, col):
+            print(f"  ({row}, {col}): {move_probabilities[i]:.4f}")
+        else:
+            print(f"  ({row}, {col}): Invalid")
+
+    # Choose a move based on weighted probabilities
+    move_index = np.random.choice(9, p=move_probabilities)
+    return move_index // 3, move_index % 3
 
 
 def play_game(model, human_player):
@@ -332,7 +342,7 @@ def play_game(model, human_player):
                 print("Model (O) is thinking...")
 
             board_state = game.get_board_state().flatten()
-            predicted_move = predict_next_move(model, board_state)
+            predicted_move = predict_next_move(model, board_state, game)
             row, col = predicted_move
             print(f"Model plays at: ({row}, {col})")
             assert game.make_move(row, col)
@@ -376,7 +386,10 @@ def inspect_data(data):
     print(board_state)
     print("-" * 10)
 
-    row, col = one_hot_to_move(random_example.move_one_hot)
+    row, col = (
+        np.where(random_example.move_one_hot == 1)[0][0] // 3,
+        np.where(random_example.move_one_hot == 1)[0][0] % 3,
+    )
 
     # Print the move and reward
     print(f"Player 2 Move: ({row}, {col})")
