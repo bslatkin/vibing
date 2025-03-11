@@ -116,9 +116,29 @@ class GameStats:
 
 def calculate_reward(game, move_index, winner):
     """Calculates the reward for a move at a specific index in the game history."""
-    # Assign rewards based on the final outcome relative to the current player
     _, _, current_player = game.move_history[move_index]
-    winner = game.check_winner()
+    opponent = 3 - current_player
+
+    # Replay the game up to the current move
+    temp_game = TicTacToe()
+    for i in range(move_index + 1):
+        row, col, _ = game.move_history[i]
+        temp_game.make_move(row, col)
+
+    # Check if the opponent can win on their next turn
+    if not temp_game.is_board_full() and temp_game.check_winner() == 0:
+        opponent_next_moves = [
+            (r, c)
+            for r in range(3)
+            for c in range(3)
+            if temp_game.board[r, c] == 0
+        ]
+        for next_row, next_col in opponent_next_moves:
+            temp_game2 = temp_game.copy()
+            temp_game2.make_move(next_row, next_col)
+            if temp_game2.check_winner() == opponent:
+                return -1  # Opponent can win on next turn
+
     if winner == current_player:
         return 1
     elif winner == 0:
@@ -147,14 +167,14 @@ def create_training_examples(game, winner, data):
             )
         )
 
+        if data and len(data) % 100_000 == 0:
+            print(f"Generated {len(data)} data points...")
+
 
 def generate_all_games(game, data, player_stats):
     """
     Recursively generates all possible Tic-Tac-Toe games and extracts training data.
     """
-    if data and len(data) % 10000 == 0:
-        print(f"Generated {len(data)} data points...")
-
     winner = game.check_winner()
     if winner != 0 or game.is_board_full():
         if winner == 2:
