@@ -227,7 +227,7 @@ def train_model(model, data, epochs=10, batch_size=32):
             "move_output": "sparse_categorical_crossentropy",
             "reward_output": "mse",
         },
-        loss_weights={"move_output": 0.7, "reward_output": 0.3},
+        loss_weights={"move_output": 0.1, "reward_output": 0.9},
         metrics={"move_output": "accuracy"},
     )
     y_move = np.array([example.move for example in data])
@@ -367,7 +367,7 @@ def main():
     generate_parser.add_argument(
         "--num_games",
         type=int,
-        default=500_000,
+        default=50_000,
         help="Number of games to generate",
     )
     generate_parser.add_argument(
