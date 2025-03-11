@@ -181,8 +181,8 @@ def create_training_examples(game, winner):
     for i, (row, col, move_player) in enumerate(game.move_history):
         if move_player == 2:
             padded_history = [np.zeros(9)] * (
-                CONTEXT_WINDOW - min(CONTEXT_WINDOW, i + 1)
-            ) + [x.copy() for x in game.board_history[: i + 1]]
+                CONTEXT_WINDOW - min(CONTEXT_WINDOW, i)
+            ) + [x.copy() for x in game.board_history[:i]]
             padded_board_history = [
                 x.copy() for x in padded_history[-CONTEXT_WINDOW:]
             ]
