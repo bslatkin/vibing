@@ -217,7 +217,7 @@ def create_model():
     x = layers.Dense(64, activation="relu")(board_input)
     x = layers.Dense(32, activation="relu")(x)
 
-    move_output = layers.Dense(9, activation="softmax", name="move_output")(x)
+    move_output = layers.Dense(9, name="move_output")(x)  # Removed softmax
     reward_output = layers.Dense(1, activation="tanh", name="reward_output")(x)
 
     model = keras.Model(
@@ -278,7 +278,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
             "move_output": "sparse_categorical_crossentropy",  # This is correct now
             "reward_output": "mse",
         },
-        loss_weights={"move_output": 0.05, "reward_output": 0.95},
+        loss_weights={"move_output": 0.3, "reward_output": 0.7},
         metrics={"move_output": "accuracy"},
     )
 
@@ -311,7 +311,9 @@ def predict_next_move(model, board_state):
         return None  # No valid moves
 
     # Choose the best valid move
-    best_move_index = valid_moves[np.argmax(move_predictions[valid_moves])]
+    best_move_index = valid_moves[
+        np.argmax(move_predictions[valid_moves])
+    ]  # argmax on raw scores
     row = best_move_index // 3
     col = best_move_index % 3
     return row, col
@@ -433,7 +435,7 @@ def main():
         "--epochs", type=int, default=10, help="Number of training epochs"
     )
     train_parser.add_argument(
-        "--batch_size", type=int, default=1024, help="Batch size for training"
+        "--batch_size", type=int, default=128, help="Batch size for training"
     )
     train_parser.add_argument(
         "--output_model",
