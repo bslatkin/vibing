@@ -102,11 +102,10 @@ class GameStats:
         return f"Total Wins ({self.name}): {self.wins}, Losses ({self.name}): {self.losses}, Draws ({self.name}): {self.draws}, Win percentage ({self.name}): {win_percentage:.2f}%"
 
 
-def calculate_reward(game, row, col, move_player):
+def calculate_reward(game, row, col, winner):
     """Calculates the reward for a move."""
-    if move_player != 2:
-        return 0
-    reward = 0
+
+    reward = 1 if winner == 2 else -1
 
     # Check if the move wins the game
     temp_game = TicTacToe()
@@ -114,7 +113,7 @@ def calculate_reward(game, row, col, move_player):
     temp_game.current_player = game.current_player
     temp_game.make_move(row, col)
     if temp_game.check_winner() == 2:
-        reward = 1
+        reward += 1
 
     # Check if the move creates two in a row for player 2
     for r in range(3):
@@ -126,7 +125,7 @@ def calculate_reward(game, row, col, move_player):
                         and 0 <= c + dc < 3
                         and temp_game.board[r + dr, c + dc] == 2
                     ):
-                        reward = 1
+                        reward += 1
 
     # Check if the move blocks player 1 from winning
     for r in range(3):
@@ -134,7 +133,7 @@ def calculate_reward(game, row, col, move_player):
             if temp_game.board[r, c] == 0:
                 temp_game.board[r, c] = 1
                 if temp_game.check_winner() == 1:
-                    reward = 1
+                    reward += 1
                 temp_game.board[r, c] = 0
 
     # Check if the move allows player 1 to win in the next turn
@@ -143,7 +142,7 @@ def calculate_reward(game, row, col, move_player):
             if temp_game.board[r, c] == 0:
                 temp_game.board[r, c] = 1
                 if temp_game.check_winner() == 1:
-                    reward = -1
+                    reward += -1
                 temp_game.board[r, c] = 0
 
     # Check if the move allows player 1 to get two in a row in the next turn
@@ -156,7 +155,7 @@ def calculate_reward(game, row, col, move_player):
                         and 0 <= c + dc < 3
                         and temp_game.board[r + dr, c + dc] == 1
                     ):
-                        reward = -1
+                        reward += -1
 
     return reward
 
@@ -173,7 +172,7 @@ def create_training_examples(game, winner, context_window):
                 x.copy() for x in padded_history[-context_window:]
             ]
 
-            reward = calculate_reward(game, row, col, move_player)
+            reward = calculate_reward(game, row, col, winner)
             data.append(
                 TrainingExample(
                     board_history=np.array(padded_board_history),
@@ -319,7 +318,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.05):
             "move_output": "sparse_categorical_crossentropy",
             "reward_output": "mse",
         },
-        loss_weights={"move_output": 0.5, "reward_output": 0.5},
+        loss_weights={"move_output": 0.2, "reward_output": 0.8},
         metrics={"move_output": "accuracy"},
     )
 
