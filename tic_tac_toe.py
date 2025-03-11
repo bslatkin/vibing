@@ -186,8 +186,12 @@ def generate_all_games(game, data, second_player_stats):
     """
     Recursively generates all possible Tic-Tac-Toe games and extracts training data.
     """
+    if data and len(data) % 10000 == 0:
+        print(f"Generated {len(data)} data points...")
+
     winner = game.check_winner()
     if winner != 0 or game.is_board_full():
+
         if winner == 2:
             second_player_stats.add_win()
         elif winner == 1:
@@ -217,12 +221,7 @@ def generate_training_data():
     game = TicTacToe()
     data = []
     second_player_stats = GameStats("Second")
-
-    data, second_player_stats = generate_all_games(
-        game,
-        data,
-        second_player_stats,
-    )
+    generate_all_games(game, data, second_player_stats)
     print("Finished generating data.")
     print(second_player_stats)
     return data
@@ -293,7 +292,7 @@ class TestAccuracyCallback(Callback):
         print()
 
 
-def train_model(model, data, epochs=10, batch_size=32, test_size=0.05):
+def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     X = np.array([example.board_history for example in data])
     y_move = np.array([example.move for example in data])
     y_reward = np.array([example.reward for example in data])
