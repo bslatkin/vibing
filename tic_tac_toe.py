@@ -44,6 +44,36 @@ class TicTacToe:
         else:
             return False
 
+    def count_touching_squares(self, player):
+        """Counts the maximum number of touching squares for a given player."""
+        max_touching = 0
+        for row in range(3):
+            for col in range(3):
+                if self.board[row, col] == player:
+                    touching = 0
+                    # Check adjacent squares
+                    for dr, dc in [
+                        (-1, 0),
+                        (1, 0),
+                        (0, -1),
+                        (0, 1),
+                        (-1, -1),
+                        (-1, 1),
+                        (1, -1),
+                        (1, 1),
+                    ]:
+                        nr, nc = row + dr, col + dc
+                        if (
+                            0 <= nr < 3
+                            and 0 <= nc < 3
+                            and self.board[nr, nc] == player
+                        ):
+                            touching += 1
+                    max_touching = max(max_touching, touching)
+        return max_touching
+
+        pass
+
     def check_winner(self):
         # Check rows
         for row in self.board:
@@ -89,6 +119,12 @@ class TicTacToe:
         new_game.board_history = self.board_history[:]
         return new_game
 
+    def copy_until_move(self, move_index):
+        new_game = TicTacToe()
+        for row, col, _ in self.move_history[:move_index]:
+            new_game.make_move(row, col)
+        return new_game
+
 
 class GameStats:
     def __init__(self, name):
@@ -114,37 +150,58 @@ class GameStats:
         return f"Total Wins ({self.name}): {self.wins}, Losses ({self.name}): {self.losses}, Draws ({self.name}): {self.draws}, Win percentage ({self.name}): {win_percentage:.2f}%"
 
 
-def calculate_reward(game, move_index, winner):
+def calculate_reward(game, move_index):
     """Calculates the reward for a move at a specific index in the game history."""
-    _, _, current_player = game.move_history[move_index]
-    opponent = 3 - current_player
+    before_game = game.copy_until_move(move_index)
+    after_game = game.copy_until_move(move_index + 1)
 
-    # Replay the game up to the current move
-    temp_game = TicTacToe()
-    for i in range(move_index + 1):
-        row, col, _ = game.move_history[i]
-        temp_game.make_move(row, col)
+    player = before_game.current_player
+    opponent = after_game.current_player
+
+    player_wins = False
+    player_more_touching = False
+    opponent_will_win = False
+    opponent_more_touching = False
+
+    if after_game.check_winner() == player:
+        # Current player wins on this turn
+        player_wins = True
 
     # Check if the opponent can win on their next turn
-    if not temp_game.is_board_full() and temp_game.check_winner() == 0:
-        opponent_next_moves = [
-            (r, c)
-            for r in range(3)
-            for c in range(3)
-            if temp_game.board[r, c] == 0
-        ]
-        for next_row, next_col in opponent_next_moves:
-            temp_game2 = temp_game.copy()
-            temp_game2.make_move(next_row, next_col)
-            if temp_game2.check_winner() == opponent:
-                return -1  # Opponent can win on next turn
+    opponent_next_moves = [
+        (r, c)
+        for r in range(3)
+        for c in range(3)
+        if after_game.board[r, c] == 0
+    ]
+    for next_row, next_col in opponent_next_moves:
+        temp_game = after_game.copy()
+        temp_game.make_move(next_row, next_col)
 
-    if winner == current_player:
+        if temp_game.check_winner() == opponent:
+            opponent_can_win = True
+
+        before_count = after_game.count_touching_squares(opponent)
+        after_count = temp_game.count_touching_squares(opponent)
+        if before_count and after_count > before_count:
+            opponent_more_touching = True
+
+    # Player increases touching on this turn
+    before_count = before_game.count_touching_squares(player)
+    after_count = after_game.count_touching_squares(player)
+    if before_count and after_count > before_count:
+        player_more_touching = True
+
+    if player_wins:
         return 1
-    elif winner == 0:
-        return 0.5
-    else:
+    elif opponent_will_win:
         return -1
+    elif player_more_touching:
+        return 0.5
+    elif opponent_more_touching:
+        return -0.5
+    else:
+        return 0
 
 
 def create_training_examples(game, winner, data):
@@ -158,7 +215,7 @@ def create_training_examples(game, winner, data):
         move_one_hot[row * 3 + col] = 1
 
         # Calculate reward relative to the player who made the move
-        reward = calculate_reward(game, move_index, winner)
+        reward = calculate_reward(game, move_index)
         data.append(
             TrainingExample(
                 board_state=board_state,
