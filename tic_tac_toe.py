@@ -44,33 +44,45 @@ class TicTacToe:
         else:
             return False
 
-    def count_touching_squares(self, player):
-        """Counts the maximum number of touching squares for a given player."""
-        max_touching = 0
-        for row in range(3):
-            for col in range(3):
-                if self.board[row, col] == player:
-                    touching = 0
-                    # Check adjacent squares
-                    for dr, dc in [
-                        (-1, 0),
-                        (1, 0),
-                        (0, -1),
-                        (0, 1),
-                        (-1, -1),
-                        (-1, 1),
-                        (1, -1),
-                        (1, 1),
-                    ]:
-                        nr, nc = row + dr, col + dc
-                        if (
-                            0 <= nr < 3
-                            and 0 <= nc < 3
-                            and self.board[nr, nc] == player
-                        ):
-                            touching += 1
-                    max_touching = max(max_touching, touching)
-        return max_touching
+    def get_max_squares(self, row, col, player):
+        """
+        Returns the maximum number of squares a player has filled in
+        relative to a given position.
+        """
+        max_present = 0
+
+        # Check row
+        row_present = 0
+        for c in range(3):
+            if self.board[row, c] == player:
+                row_present += 1
+
+        # Check column
+        col_present = 0
+        for r in range(3):
+            if self.board[r, col] == player:
+                col_present += 1
+
+        # Check diagonal (top-left to bottom-right)
+        diag_present = 0
+        if row == col:
+            for i in range(3):
+                if self.board[i, i] == player:
+                    diag_present += 1
+
+        # Check diagonal (top-right to bottom-left)
+        diag_right_present = 0
+        if row + col == 2:
+            for i in range(3):
+                if self.board[i, 2 - i] == player:
+                    diag_right_present += 1
+
+        return (
+            row_present,
+            col_present,
+            diag_present,
+            diag_right_present,
+        )
 
     def check_winner(self):
         # Check rows
@@ -158,10 +170,6 @@ def calculate_reward(game, move_index):
 
     player_wins = False
     opponent_will_win = False
-    opponent_in_row = False
-    opponent_in_column = False
-    opponent_in_diagonal_left = False
-    opponent_in_diagonal_right = False
 
     if after_game.check_winner() == player:
         # Current player wins on this turn
@@ -181,45 +189,54 @@ def calculate_reward(game, move_index):
         if temp_game.check_winner() == opponent:
             opponent_will_win = True
 
-    # Check if the opponent has any squares filled in the row, column,
-    # or diagonal of the last play.
     row, col, player = game.move_history[move_index]
 
-    opponent_in_row = (
-        after_game.board[row, 0] == opponent
-        or after_game.board[row, 1] == opponent
-        or after_game.board[row, 2] == opponent
-    )
-    opponent_in_column = (
-        after_game.board[0, col] == opponent
-        or after_game.board[1, col] == opponent
-        or after_game.board[2, col] == opponent
-    )
-    opponent_in_diagonal_left = row == col and (
-        after_game.board[0, 0] == opponent
-        or after_game.board[1, 1] == opponent
-        or after_game.board[2, 2] == opponent
-    )
-    opponent_in_diagonal_right = row + col == 2 and (
-        after_game.board[0, 2] == opponent
-        or after_game.board[1, 1] == opponent
-        or after_game.board[2, 0] == opponent
+    # Check if the opponent has any squares filled in the row, column,
+    # or diagonal of the last play.
+    (
+        opponent_col_present,
+        opponent_row_present,
+        opponent_diag_present,
+        opponent_diag_right_present,
+    ) = before_game.get_max_squares(row, col, opponent)
+
+    # Check if the player gained additional squares during this move
+    (
+        before_col_present,
+        before_row_present,
+        before_diag_present,
+        before_diag_right_present,
+    ) = before_game.get_max_squares(row, col, player)
+    (
+        after_col_present,
+        after_row_present,
+        after_diag_present,
+        after_diag_right,
+    ) = after_game.get_max_squares(row, col, player)
+
+    player_increased_squares = (
+        (after_col_present > before_col_present and opponent_col_present == 0)
+        or (
+            after_row_present > before_row_present
+            and opponent_row_present == 0
+        )
+        or (
+            after_diag_present > before_diag_present
+            and opponent_diag_present == 0
+        )
+        or (
+            after_diag_right > before_diag_right_present
+            and opponent_diag_right_present == 0
+        )
     )
 
     winner = game.check_winner()
 
     if player_wins:
-        return 1
+        return 1.0
     elif opponent_will_win:
         return -1
-    elif (
-        opponent_in_row
-        or opponent_in_column
-        or opponent_in_diagonal_left
-        or opponent_in_diagonal_right
-    ):
-        return -0.5
-    elif player_more_touching:
+    elif player_increased_squares:
         return 0.5
     elif player == winner:
         return 0.1
