@@ -225,14 +225,17 @@ class TestAccuracyCallback(Callback):
         self.y_reward_test = y_reward_test
 
     def on_epoch_end(self, epoch, logs=None):
-        loss, move_loss, reward_loss, move_accuracy = self.model.evaluate(
-            self.X_test,
-            {
-                "move_output": self.y_move_test,
-                "reward_output": self.y_reward_test,
-            },
-            verbose=0,
+        loss, move_loss, reward_loss, move_accuracy, reward_mse = (
+            self.model.evaluate(
+                self.X_test,
+                {
+                    "move_output": self.y_move_test,
+                    "reward_output": self.y_reward_test,
+                },
+                verbose=0,
+            )
         )
+
         print()
         print(
             f"Epoch {epoch+1}: Move Accuracy: {move_accuracy:.4f}, Reward Loss: {reward_loss:.4f}"
