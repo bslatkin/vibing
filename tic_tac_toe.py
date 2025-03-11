@@ -124,9 +124,8 @@ def calculate_reward(game, move_index, winner):
         reward = 1
 
     # Make the move we are evaluating
-    temp_game.make_move(row, col)
-
     # Check if the move wins the game
+    temp_game.make_move(row, col)
     if temp_game.check_winner() == 2:
         reward += 1
 
@@ -151,26 +150,15 @@ def calculate_reward(game, move_index, winner):
                     reward += 1
                 temp_game.board[r, c] = 0
 
-    # # Check if the move allows player 1 to win in the next turn
-    # for r in range(3):
-    #     for c in range(3):
-    #         if temp_game.board[r, c] == 0:
-    #             temp_game.board[r, c] = 1
-    #             if temp_game.check_winner() == 1:
-    #                 reward += -1
-    #             temp_game.board[r, c] = 0
-
-    # # Check if the move allows player 1 to get two in a row in the next turn
-    # for r in range(3):
-    #     for c in range(3):
-    #         if temp_game.board[r, c] == 1:
-    #             for dr, dc in [(0, 1), (1, 0), (1, 1), (1, -1)]:
-    #                 if (
-    #                     0 <= r + dr < 3
-    #                     and 0 <= c + dc < 3
-    #                     and temp_game.board[r + dr, c + dc] == 1
-    #                 ):
-    #                     reward += -1
+    # Check if there is another move that would have won this turn
+    temp_game.board[row, col] = 0
+    for r in range(3):
+        for c in range(3):
+            if temp_game.board[r, c] == 0:
+                temp_game.board[r, c] = 2
+                if temp_game.check_winner() == 2:
+                    return -1
+                temp_game.board[r, c] = 0
 
     return reward
 
