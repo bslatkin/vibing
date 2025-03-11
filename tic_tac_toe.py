@@ -85,9 +85,12 @@ class TicTacToe:
 
 def generate_training_data(num_games, context_window):
     data: List[TrainingExample] = []
-    wins = 0
-    losses = 0
-    draws = 0
+    wins_as_first = 0
+    losses_as_first = 0
+    draws_as_first = 0
+    wins_as_second = 0
+    losses_as_second = 0
+    draws_as_second = 0
     report_interval = num_games // 100  # Report every 1%
     if report_interval == 0:
         report_interval = 1
@@ -95,11 +98,13 @@ def generate_training_data(num_games, context_window):
     for game_num in range(num_games):
         if game_num % report_interval == 0:
             print(
-                f"Generating game {game_num}/{num_games} - Wins: {wins}, Losses: {losses}, Draws: {draws}"
+                f"Generating game {game_num}/{num_games} - Wins (First): {wins_as_first}, Losses (First): {losses_as_first}, Draws (First): {draws_as_first}, Wins (Second): {wins_as_second}, Losses (Second): {losses_as_second}, Draws (Second): {draws_as_second}"
             )
         game = TicTacToe()
         board_history = []
         game_moves = []  # Store moves made in the game
+        first_player = random.choice([1, 2])
+        current_player = first_player
         while True:
             empty_cells = [
                 (r, c)
@@ -111,7 +116,8 @@ def generate_training_data(num_games, context_window):
                 break
             row, col = random.choice(empty_cells)
             game.make_move(row, col)
-            game_moves.append((row, col))
+            game_moves.append((row, col, current_player))
+            current_player = 3 - current_player
 
             # Update history
             board_history.append(game.get_board_state().flatten())
@@ -129,42 +135,105 @@ def generate_training_data(num_games, context_window):
             winner = game.check_winner()
             if winner != 0 or game.is_board_full():
                 reward = game.get_reward()
-                if reward == 1:
-                    wins += 1
-                elif reward == -1:
-                    losses += 1
+                if winner == first_player:
+                    if first_player == 1:
+                        wins_as_first += 1
+                    else:
+                        wins_as_second += 1
+                elif winner != 0:
+                    if first_player == 1:
+                        losses_as_first += 1
+                    else:
+                        losses_as_second += 1
                 else:
-                    draws += 1
-                for i, (row, col) in enumerate(game_moves):
+                    if first_player == 1:
+                        draws_as_first += 1
+                    else:
+                        draws_as_second += 1
+
+                for i, (row, col, move_player) in enumerate(game_moves):
                     # Assign reward to each move in the game
                     # For simplicity, we'll just use the end-of-game reward
                     # In a more advanced setup, you might want to assign
                     # intermediate rewards based on board state
-                    if game.current_player == 2:
-                        data.append(
-                            TrainingExample(
-                                board_history=np.array(board_history),
-                                move=row * 3 + col,
-                                reward=reward,
+                    if move_player == 1:
+                        if winner == 1:
+                            data.append(
+                                TrainingExample(
+                                    board_history=np.array(board_history),
+                                    move=row * 3 + col,
+                                    reward=1 if first_player == 1 else -1,
+                                )
                             )
-                        )
-                    else:
-                        data.append(
-                            TrainingExample(
-                                board_history=np.array(board_history),
-                                move=row * 3 + col,
-                                reward=-reward,
+                        elif winner == 2:
+                            data.append(
+                                TrainingExample(
+                                    board_history=np.array(board_history),
+                                    move=row * 3 + col,
+                                    reward=-1 if first_player == 1 else 1,
+                                )
                             )
-                        )
+                        else:
+                            data.append(
+                                TrainingExample(
+                                    board_history=np.array(board_history),
+                                    move=row * 3 + col,
+                                    reward=0,
+                                )
+                            )
+
+                    elif move_player == 2:
+                        if winner == 2:
+                            data.append(
+                                TrainingExample(
+                                    board_history=np.array(board_history),
+                                    move=row * 3 + col,
+                                    reward=1 if first_player == 2 else -1,
+                                )
+                            )
+                        elif winner == 1:
+                            data.append(
+                                TrainingExample(
+                                    board_history=np.array(board_history),
+                                    move=row * 3 + col,
+                                    reward=-1 if first_player == 2 else 1,
+                                )
+                            )
+                        else:
+                            data.append(
+                                TrainingExample(
+                                    board_history=np.array(board_history),
+                                    move=row * 3 + col,
+                                    reward=0,
+                                )
+                            )
+
                 break
     print(
-        f"Finished generating data. Total Wins: {wins}, Losses: {losses}, Draws: {draws}"
+        f"Finished generating data. Total Wins (First): {wins_as_first}, Losses (First): {losses_as_first}, Draws (First): {draws_as_first}, Total Wins (Second): {wins_as_second}, Losses (Second): {losses_as_second}, Draws (Second): {draws_as_second}"
     )
-    total_games = wins + losses + draws
-    if total_games > 0:
-        print(f"Win percentage: {wins / total_games * 100:.2f}%")
-        print(f"Loss percentage: {losses / total_games * 100:.2f}%")
-        print(f"Draw percentage: {draws / total_games * 100:.2f}%")
+    total_games_first = wins_as_first + losses_as_first + draws_as_first
+    if total_games_first > 0:
+        print(
+            f"Win percentage (First): {wins_as_first / total_games_first * 100:.2f}%"
+        )
+        print(
+            f"Loss percentage (First): {losses_as_first / total_games_first * 100:.2f}%"
+        )
+        print(
+            f"Draw percentage (First): {draws_as_first / total_games_first * 100:.2f}%"
+        )
+    total_games_second = wins_as_second + losses_as_second + draws_as_second
+    if total_games_second > 0:
+        print(
+            f"Win percentage (Second): {wins_as_second / total_games_second * 100:.2f}%"
+        )
+        print(
+            f"Loss percentage (Second): {losses_as_second / total_games_second * 100:.2f}%"
+        )
+        print(
+            f"Draw percentage (Second): {draws_as_second / total_games_second * 100:.2f}%"
+        )
     return data
 
 
@@ -241,7 +310,7 @@ def train_model(model, data, epochs=10, batch_size=32):
         reward_loss = mse(reward_true, reward_pred)
 
         # Combine losses
-        total_loss = 0.05 * move_loss + 0.95 * reward_loss
+        total_loss = 0.9 * move_loss + 0.1 * reward_loss
         return total_loss
 
     model.compile(optimizer="adam", loss=custom_loss, metrics=["accuracy"])
