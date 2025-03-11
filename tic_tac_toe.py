@@ -152,15 +152,14 @@ def create_training_examples(game, winner):
             # Create a copy of the board state before this move
             board_state = game.board_history[move_index - 1].copy()
 
-            # Create one-hot encoded move
-            move_one_hot = np.zeros(9)
-            move_one_hot[row * 3 + col] = 1
+            # Store the move as a single integer
+            move_index_int = row * 3 + col
 
             reward = calculate_reward(game, move_index, winner)
             data.append(
                 TrainingExample(
                     board_state=board_state,
-                    move_one_hot=move_one_hot,
+                    move_one_hot=move_index_int,  # Changed here
                     reward=reward,
                 )
             )
@@ -227,9 +226,8 @@ def create_model():
     return model
 
 
-def one_hot_to_move(one_hot_move):
-    """Converts a one-hot encoded move to a (row, col) tuple."""
-    move_index = np.argmax(one_hot_move)
+def one_hot_to_move(move_index):
+    """Converts a move index to a (row, col) tuple."""
     return move_index // 3, move_index % 3
 
 
@@ -258,7 +256,9 @@ class TestAccuracyCallback(Callback):
 
 def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     X = np.array([example.board_state for example in data])
-    y_move = np.array([example.move_one_hot for example in data])
+    y_move = np.array(
+        [example.move_one_hot for example in data]
+    )  # Changed here
     y_reward = np.array([example.reward for example in data])
 
     (
@@ -275,7 +275,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     model.compile(
         optimizer="adam",
         loss={
-            "move_output": "sparse_categorical_crossentropy",
+            "move_output": "sparse_categorical_crossentropy",  # This is correct now
             "reward_output": "mse",
         },
         loss_weights={"move_output": 0.05, "reward_output": 0.95},
@@ -288,7 +288,10 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
 
     model.fit(
         X_train,
-        {"move_output": y_move_train, "reward_output": y_reward_train},
+        {
+            "move_output": y_move_train,
+            "reward_output": y_reward_train,
+        },  # Changed here
         epochs=epochs,
         batch_size=batch_size,
         callbacks=[test_accuracy_callback],
