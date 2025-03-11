@@ -288,18 +288,30 @@ def predict_next_move(model, board_history):
     board_history_array = np.array(board_history).reshape(
         1, model.input_shape[1], model.input_shape[2]
     )
-    predictions = model.predict(board_history_array)[0]
+    predictions = model.predict(board_history_array, verbose=0)
+    # Corrected part:
+    move_predictions = predictions[0][0]
 
     # Mask out invalid moves
     current_board = board_history[-1].reshape((3, 3))
     valid_moves = np.where(current_board.flatten() == 0)[0]
+
+    # Handle no valid moves
     if len(valid_moves) == 0:
         return None
 
-    # Get the move predictions
-    move_predictions = keras.activations.softmax(predictions[:9]).numpy()
+    # Handle only one valid move
+    if len(valid_moves) == 1:
+        best_move_index = valid_moves[0]
+    else:
+        # Get the move predictions
+        move_predictions = keras.activations.softmax(move_predictions).numpy()
 
-    best_move_index = valid_moves[np.argmax(move_predictions[valid_moves])]
+        # Corrected part:
+        best_move_index_in_valid_moves = np.argmax(
+            move_predictions[valid_moves]
+        )
+        best_move_index = valid_moves[best_move_index_in_valid_moves]
 
     row = best_move_index // 3
     col = best_move_index % 3
@@ -412,10 +424,10 @@ def main():
         help="Input file for training data",
     )
     train_parser.add_argument(
-        "--epochs", type=int, default=10, help="Number of training epochs"
+        "--epochs", type=int, default=2, help="Number of training epochs"
     )
     train_parser.add_argument(
-        "--batch_size", type=int, default=64, help="Batch size for training"
+        "--batch_size", type=int, default=1024, help="Batch size for training"
     )
     train_parser.add_argument(
         "--context_window",
@@ -426,7 +438,7 @@ def main():
     train_parser.add_argument(
         "--output_model",
         type=str,
-        default="trained_model",
+        default="trained_model.keras",
         help="Output file for trained model",
     )
 
@@ -435,7 +447,7 @@ def main():
     play_parser.add_argument(
         "--model_file",
         type=str,
-        default="trained_model",
+        default="trained_model.keras",
         help="Model file to use for playing",
     )
     play_parser.add_argument(
