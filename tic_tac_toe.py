@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import List
 
 import numpy as np
+from sklearn.model_selection import train_test_split
 from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.callbacks import Callback
@@ -77,6 +78,29 @@ class TicTacToe:
         return self.board.copy()
 
 
+def is_two_in_a_row(board, player):
+    """Checks if there are two adjacent cells in a row, column, or diagonal for the given player."""
+    # Check rows
+    for row in board:
+        for i in range(2):
+            if row[i] == player and row[i + 1] == player:
+                return True
+    # Check columns
+    for col in range(3):
+        for i in range(2):
+            if board[i, col] == player and board[i + 1, col] == player:
+                return True
+    # Check diagonals
+    if (
+        (board[0, 0] == player and board[1, 1] == player)
+        or (board[1, 1] == player and board[2, 2] == player)
+        or (board[0, 2] == player and board[1, 1] == player)
+        or (board[1, 1] == player and board[2, 0] == player)
+    ):
+        return True
+    return False
+
+
 class GameStats:
     def __init__(self, name):
         self.name = name
@@ -99,6 +123,35 @@ class GameStats:
             (self.wins / total_games * 100) if total_games > 0 else 0
         )
         return f"Total Wins ({self.name}): {self.wins}, Losses ({self.name}): {self.losses}, Draws ({self.name}): {self.draws}, Win percentage ({self.name}): {win_percentage:.2f}%"
+
+
+def create_training_examples(game, winner, context_window):
+    """Creates TrainingExample instances from a completed game."""
+    data: List[TrainingExample] = []
+    for i, (row, col, move_player) in enumerate(game.move_history):
+        if move_player == 2:
+            padded_history = [np.zeros(9)] * (
+                context_window - min(context_window, i + 1)
+            ) + [x.copy() for x in game.board_history[: i + 1]]
+            padded_board_history = [
+                x.copy() for x in padded_history[-context_window:]
+            ]
+
+            if winner == 2:
+                reward = 1
+            elif winner == 1:
+                reward = 0
+            else:
+                reward = 0.5
+
+            data.append(
+                TrainingExample(
+                    board_history=np.array(padded_board_history),
+                    move=row * 3 + col,
+                    reward=reward,
+                )
+            )
+    return data
 
 
 def generate_training_data(num_games, context_window):
@@ -136,34 +189,9 @@ def generate_training_data(num_games, context_window):
                     else:
                         second_player_stats.add_draw()
 
-                    for i, (row, col, move_player) in enumerate(
-                        game.move_history
-                    ):
-                        if move_player == 2:
-                            padded_history = [np.zeros(9)] * (
-                                context_window - min(context_window, i + 1)
-                            ) + [x.copy() for x in game.board_history[: i + 1]]
-                            padded_board_history = [
-                                x.copy()
-                                for x in padded_history[-context_window:]
-                            ]
-
-                            if winner == 2:
-                                reward = 1
-                            elif winner == 1:
-                                reward = -1
-                            else:
-                                reward = 0
-
-                            data.append(
-                                TrainingExample(
-                                    board_history=np.array(
-                                        padded_board_history
-                                    ),
-                                    move=row * 3 + col,
-                                    reward=reward,
-                                )
-                            )
+                    data.extend(
+                        create_training_examples(game, winner, context_window)
+                    )
 
                     break
     print("Finished generating data.")
@@ -216,10 +244,44 @@ def create_transformer_model(
     return model
 
 
-def train_model(model, data, epochs=10, batch_size=32):
+class TestAccuracyCallback(Callback):
+    def __init__(self, X_test, y_move_test, y_reward_test):
+        super().__init__()
+        self.X_test = X_test
+        self.y_move_test = y_move_test
+        self.y_reward_test = y_reward_test
+
+    def on_epoch_end(self, epoch, logs=None):
+        loss, move_loss, reward_loss, move_accuracy = self.model.evaluate(
+            self.X_test,
+            {
+                "move_output": self.y_move_test,
+                "reward_output": self.y_reward_test,
+            },
+            verbose=0,
+        )
+        print()
+        print(
+            f"Epoch {epoch+1}: Move Accuracy: {move_accuracy:.4f}, Reward Loss: {reward_loss:.4f}"
+        )
+        print()
+
+
+def train_model(model, data, epochs=10, batch_size=32, test_size=0.05):
     X = np.array([example.board_history for example in data])
     y_move = np.array([example.move for example in data])
     y_reward = np.array([example.reward for example in data])
+
+    (
+        X_train,
+        X_test,
+        y_move_train,
+        y_move_test,
+        y_reward_train,
+        y_reward_test,
+    ) = train_test_split(
+        X, y_move, y_reward, test_size=test_size, random_state=42
+    )
 
     model.compile(
         optimizer="adam",
@@ -227,18 +289,20 @@ def train_model(model, data, epochs=10, batch_size=32):
             "move_output": "sparse_categorical_crossentropy",
             "reward_output": "mse",
         },
-        loss_weights={"move_output": 0.1, "reward_output": 0.9},
+        loss_weights={"move_output": 0.5, "reward_output": 0.5},
         metrics={"move_output": "accuracy"},
     )
-    y_move = np.array([example.move for example in data])
-    y_reward = np.array([example.reward for example in data])
-    y = np.column_stack((y_move, y_reward))
+
+    test_accuracy_callback = TestAccuracyCallback(
+        X_test, y_move_test, y_reward_test
+    )
+
     model.fit(
-        X,
-        {"move_output": y_move, "reward_output": y_reward},
+        X_train,
+        {"move_output": y_move_train, "reward_output": y_reward_train},
         epochs=epochs,
         batch_size=batch_size,
-        callbacks=[],
+        callbacks=[test_accuracy_callback],
     )
     return model
 
