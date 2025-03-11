@@ -123,9 +123,8 @@ def generate_training_data(num_games, context_window):
             )
         game = TicTacToe()
         board_history = []
-        game_moves = []  # Store moves made in the game
-        first_player = random.choice([1, 2])
-        current_player = first_player
+        game_moves = []
+        current_player = 1
         while True:
             empty_cells = [
                 (r, c)
@@ -136,57 +135,40 @@ def generate_training_data(num_games, context_window):
             if not empty_cells:
                 break
             row, col = random.choice(empty_cells)
-            game.make_move(row, col)
-            game_moves.append((row, col, current_player))
-            current_player = 3 - current_player
+            if game.make_move(row, col):
+                game_moves.append((row, col, current_player))
+                board_state = game.get_board_state().flatten()
+                board_history.append(board_state)
+                current_player = 3 - current_player
 
-            # Update history
-            board_state = game.get_board_state().flatten()
-            board_history.append(board_state)
-
-            winner = game.check_winner()
-            if winner != 0 or game.is_board_full():
-                reward = game.get_reward()
-
-                if winner == first_player:
-                    (
-                        first_player_stats
-                        if first_player == 1
-                        else second_player_stats
-                    ).add_win()
-                elif winner != 0:
-                    (
-                        first_player_stats
-                        if first_player == 1
-                        else second_player_stats
-                    ).add_loss()
-                else:
-                    (
-                        first_player_stats
-                        if first_player == 1
-                        else second_player_stats
-                    ).add_draw()
-
-                for i, (row, col, move_player) in enumerate(game_moves):
-                    # Pad board history for uniform input
-                    padded_history = [np.zeros(9)] * (
-                        context_window - min(context_window, i + 1)
-                    ) + board_history[: i + 1]
-                    padded_board_history = padded_history[-context_window:]
-
-                    # Assign reward to each move based on the outcome
-                    reward = 0
-                    if winner != 0:
-                        if winner == move_player:
-                            reward = 1
-                        else:
-                            reward = -1
+                winner = game.check_winner()
+                if winner != 0 or game.is_board_full():
+                    reward = game.get_reward()
+                    if winner == 2:
+                        second_player_stats.add_win()
+                    elif winner == 1:
+                        first_player_stats.add_loss()
                     else:
-                        reward = 0
+                        first_player_stats.add_draw()
+                        second_player_stats.add_draw()
 
-                    # Adjust reward based on who the first player was
-                    if first_player != move_player:
-                        reward *= -1
+                    for i, (row, col, move_player) in enumerate(game_moves):
+                        if move_player == 2:
+                            padded_history = [np.zeros(9)] * (
+                                context_window - min(context_window, i + 1)
+                            ) + board_history[: i + 1]
+                            padded_board_history = padded_history[
+                                -context_window:
+                            ]
+
+                            reward = 0
+                            if winner != 0:
+                                if winner == move_player:
+                                    reward = 1
+                                else:
+                                    reward = -1
+                            else:
+                                reward = 0
 
                     data.append(
                         TrainingExample(
@@ -195,9 +177,9 @@ def generate_training_data(num_games, context_window):
                             reward=reward,
                         )
                     )
+                    break
+    print("Finished generating data.")
 
-                break
-    print(f"Finished generating data.")
     print(first_player_stats)
     print(second_player_stats)
     return data
@@ -318,24 +300,23 @@ def predict_next_move(model, board_history):
     return (row, col)
 
 
-def play_game(model):
+def play_game(model, context_window):
     game = TicTacToe()
-    board_history = []
+    board_history = [np.zeros(9)] * context_window
     while True:
         print("\nCurrent Board:")
         print(game.board)
 
-        if game.current_player == 1:
-            # Model's turn
+        if game.current_player == 2:
             board_history.append(game.get_board_state().flatten())
-            predicted_move = predict_next_move(model, board_history)
-            if predicted_move is None:
-                print("No valid moves left.")
-                break
+            predicted_move = predict_next_move(
+                model, board_history[-context_window:]
+            )
             row, col = predicted_move
-            print(f"Model (X) plays at: ({row}, {col})")
+            print(f"Model (O) plays at: ({row}, {col})")
             game.make_move(row, col)
-        else:
+
+        elif game.current_player == 1:
             # Human's turn
             while True:
                 try:
@@ -399,7 +380,7 @@ def main():
     generate_parser.add_argument(
         "--num_games",
         type=int,
-        default=50000,
+        default=500_000,
         help="Number of games to generate",
     )
     generate_parser.add_argument(
@@ -424,7 +405,7 @@ def main():
         help="Input file for training data",
     )
     train_parser.add_argument(
-        "--epochs", type=int, default=2, help="Number of training epochs"
+        "--epochs", type=int, default=10, help="Number of training epochs"
     )
     train_parser.add_argument(
         "--batch_size", type=int, default=1024, help="Batch size for training"
@@ -488,7 +469,7 @@ def main():
         print("Playing game...")
         model_path = os.path.join(args.data_dir, args.model_file)
         model = load_model(model_path)
-        play_game(model)
+        play_game(model, args.context_window)
 
     else:
         parser.print_help()
