@@ -157,9 +157,11 @@ def calculate_reward(game, move_index):
     opponent = after_game.current_player
 
     player_wins = False
-    player_more_touching = False
     opponent_will_win = False
-    opponent_more_touching = False
+    opponent_in_row = False
+    opponent_in_column = False
+    opponent_in_diagonal_left = False
+    opponent_in_diagonal_right = False
 
     if after_game.check_winner() == player:
         # Current player wins on this turn
@@ -177,18 +179,32 @@ def calculate_reward(game, move_index):
         temp_game.make_move(next_row, next_col)
 
         if temp_game.check_winner() == opponent:
-            opponent_can_win = True
+            opponent_will_win = True
 
-        before_count = after_game.count_touching_squares(opponent)
-        after_count = temp_game.count_touching_squares(opponent)
-        if before_count and after_count > before_count:
-            opponent_more_touching = True
+    # Check if the opponent has any squares filled in the row, column,
+    # or diagonal of the last play.
+    row, col, player = game.move_history[move_index]
 
-    # Player increases touching on this turn
-    before_count = before_game.count_touching_squares(player)
-    after_count = after_game.count_touching_squares(player)
-    if before_count and after_count > before_count:
-        player_more_touching = True
+    opponent_in_row = (
+        after_game.board[row, 0] == opponent
+        or after_game.board[row, 1] == opponent
+        or after_game.board[row, 2] == opponent
+    )
+    opponent_in_column = (
+        after_game.board[0, col] == opponent
+        or after_game.board[1, col] == opponent
+        or after_game.board[2, col] == opponent
+    )
+    opponent_in_diagonal_left = row == col and (
+        after_game.board[0, 0] == opponent
+        or after_game.board[1, 1] == opponent
+        or after_game.board[2, 2] == opponent
+    )
+    opponent_in_diagonal_right = row + col == 2 and (
+        after_game.board[0, 2] == opponent
+        or after_game.board[1, 1] == opponent
+        or after_game.board[2, 0] == opponent
+    )
 
     winner = game.check_winner()
 
@@ -196,10 +212,15 @@ def calculate_reward(game, move_index):
         return 1
     elif opponent_will_win:
         return -1
-    # elif player_more_touching:
-    #     return 0.5
-    # elif opponent_more_touching:
-    #     return -0.5
+    elif (
+        opponent_in_row
+        or opponent_in_column
+        or opponent_in_diagonal_left
+        or opponent_in_diagonal_right
+    ):
+        return -0.5
+    elif player_more_touching:
+        return 0.5
     elif player == winner:
         return 0.1
     elif opponent == winner:
