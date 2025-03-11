@@ -19,6 +19,9 @@ class TrainingExample:
     reward: int
 
 
+CONTEXT_WINDOW = 8
+
+
 class TicTacToe:
     def __init__(self):
         self.board = np.zeros((3, 3), dtype=int)
@@ -160,16 +163,16 @@ def calculate_reward(game, row, col, winner):
     return reward
 
 
-def create_training_examples(game, winner, context_window):
+def create_training_examples(game, winner):
     """Creates TrainingExample instances from a completed game."""
     data: List[TrainingExample] = []
     for i, (row, col, move_player) in enumerate(game.move_history):
         if move_player == 2:
             padded_history = [np.zeros(9)] * (
-                context_window - min(context_window, i + 1)
+                CONTEXT_WINDOW - min(CONTEXT_WINDOW, i + 1)
             ) + [x.copy() for x in game.board_history[: i + 1]]
             padded_board_history = [
-                x.copy() for x in padded_history[-context_window:]
+                x.copy() for x in padded_history[-CONTEXT_WINDOW:]
             ]
 
             reward = calculate_reward(game, row, col, winner)
@@ -183,7 +186,7 @@ def create_training_examples(game, winner, context_window):
     return data
 
 
-def generate_training_data(num_games, context_window):
+def generate_training_data(num_games):
     data: List[TrainingExample] = []
     report_interval = num_games // 100  # Report every 1%
     if report_interval == 0:
@@ -218,9 +221,7 @@ def generate_training_data(num_games, context_window):
                     else:
                         second_player_stats.add_draw()
 
-                    data.extend(
-                        create_training_examples(game, winner, context_window)
-                    )
+                    data.extend(create_training_examples(game, winner))
 
                     break
     print("Finished generating data.")
@@ -229,18 +230,16 @@ def generate_training_data(num_games, context_window):
     return data
 
 
-def create_transformer_model(
-    context_window=5, embedding_dim=16, num_heads=2, ff_dim=32
-):
+def create_transformer_model(embedding_dim=16, num_heads=2, ff_dim=32):
     """Creates a Transformer model for Tic-Tac-Toe with a context window."""
 
-    inputs = keras.Input(shape=(context_window, 9))  # Sequence of board states
+    inputs = keras.Input(shape=(CONTEXT_WINDOW, 9))  # Sequence of board states
 
     # Embedding layer
     x = layers.Dense(embedding_dim)(inputs)
 
     # Reshape for multi-head attention
-    x = layers.Reshape((context_window, embedding_dim))(x)
+    x = layers.Reshape((CONTEXT_WINDOW, embedding_dim))(x)
 
     # Transformer encoder layers
     for _ in range(2):
@@ -380,9 +379,9 @@ def predict_next_move(model, board_history):
     return (row, col)
 
 
-def play_game(model, context_window):
+def play_game(model):
     game = TicTacToe()
-    board_history = [np.zeros(9)] * context_window
+    board_history = [np.zeros(9)] * CONTEXT_WINDOW
     while True:
         print("\nCurrent Board:")
         print(game.board)
@@ -390,7 +389,7 @@ def play_game(model, context_window):
         if game.current_player == 2:
             board_history.append(game.get_board_state().flatten())
             predicted_move = predict_next_move(
-                model, board_history[-context_window:]
+                model, board_history[-CONTEXT_WINDOW:]
             )
             row, col = predicted_move
             print(f"Model (O) plays at: ({row}, {col})")
@@ -432,6 +431,33 @@ def load_data(filename):
     return data
 
 
+def inspect_data(data):
+    """Inspects the generated test data and prints out a random game."""
+    if not data:
+        print("No data to inspect.")
+        return
+
+    random_example = random.choice(data)
+    print("Random Game Inspection:")
+    print("-" * 20)
+
+    for i in range(len(random_example.board_history)):
+        board_state = random_example.board_history[i].reshape((3, 3))
+        print(f"Board State {i+1}:")
+        print(board_state)
+        print("-" * 10)
+
+    move_index = random_example.move
+    row = move_index // 3
+    col = move_index % 3
+
+    print(f"Player 2 Move: ({row}, {col})")
+    print(f"Reward: {random_example.reward}")
+    print("-" * 20)
+
+    print("Finished inspecting data.")
+
+
 def save_model(model, filename):
     model.save(filename)
     print(f"Model saved to {filename}")
@@ -464,12 +490,6 @@ def main():
         help="Number of games to generate",
     )
     generate_parser.add_argument(
-        "--context_window",
-        type=int,
-        default=5,
-        help="Context window size for board history",
-    )
-    generate_parser.add_argument(
         "--output_file",
         type=str,
         default="training_data.pkl",
@@ -491,18 +511,22 @@ def main():
         "--batch_size", type=int, default=1024, help="Batch size for training"
     )
     train_parser.add_argument(
-        "--context_window",
-        type=int,
-        default=5,
-        help="Context window size for board history",
-    )
-    train_parser.add_argument(
         "--output_model",
         type=str,
         default="trained_model.keras",
         help="Output file for trained model",
     )
 
+    # Inspect Data Subparser
+    inspect_parser = subparsers.add_parser(
+        "inspect", help="Inspect generated training data"
+    )
+    inspect_parser.add_argument(
+        "--input_file",
+        type=str,
+        default="training_data.pkl",
+        help="Input file for training data",
+    )
     # Play Game Subparser
     play_parser = subparsers.add_parser("play", help="Play a game")
     play_parser.add_argument(
@@ -510,12 +534,6 @@ def main():
         type=str,
         default="trained_model.keras",
         help="Model file to use for playing",
-    )
-    play_parser.add_argument(
-        "--context_window",
-        type=int,
-        default=5,
-        help="Context window size for board history",
     )
 
     args = parser.parse_args()
@@ -525,9 +543,7 @@ def main():
 
     if args.command == "generate":
         print("Generating training data...")
-        training_data = generate_training_data(
-            args.num_games, args.context_window
-        )
+        training_data = generate_training_data(args.num_games)
         output_path = os.path.join(args.data_dir, args.output_file)
         save_data(training_data, output_path)
 
@@ -535,7 +551,7 @@ def main():
         print("Training model...")
         input_path = os.path.join(args.data_dir, args.input_file)
         training_data = load_data(input_path)
-        model = create_transformer_model(context_window=args.context_window)
+        model = create_transformer_model()
         model = train_model(
             model,
             training_data,
@@ -545,11 +561,16 @@ def main():
         output_path = os.path.join(args.data_dir, args.output_model)
         save_model(model, output_path)
 
+    elif args.command == "inspect":
+        print("Inspecting data...")
+        input_path = os.path.join(args.data_dir, args.input_file)
+        training_data = load_data(input_path)
+        inspect_data(training_data)
     elif args.command == "play":
         print("Playing game...")
         model_path = os.path.join(args.data_dir, args.model_file)
         model = load_model(model_path)
-        play_game(model, args.context_window)
+        play_game(model)
 
     else:
         parser.print_help()
