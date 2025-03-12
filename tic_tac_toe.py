@@ -185,7 +185,7 @@ def create_training_example(row, col, game):
         assert False
 
     return TrainingExample(
-        board_state=game.parent_board.get_board_state(),
+        board_state=game.parent_board.get_board_state().flatten(),
         move_one_hot=move_one_hot,
         reward=reward,
         row=row,
