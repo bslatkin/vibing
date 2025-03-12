@@ -16,33 +16,40 @@ from tensorflow.keras.callbacks import Callback
 class TrainingExample:
     board_state: np.ndarray
     move_one_hot: np.ndarray
-    reward: int
+    reward: float
+    row: int
+    col: int
+    last_player: int
 
 
 class TicTacToe:
     def __init__(self):
         self.board = np.zeros((3, 3), dtype=int)
         self.current_player = 1  # Player X starts
-        self.move_history = []
-        self.board_history = []
+        self.parent_board = None
+        self.child_boards = {}  # Map (row, col) of the play to the child board
+        self.win_probability_x = None
+        self.win_probability_o = None
 
     def is_valid_move(self, row, col):
         return 0 <= row < 3 and 0 <= col < 3 and self.board[row, col] == 0
 
     def make_move(self, row, col):
-        if self.is_valid_move(row, col):
-            # Save the current state of the board
-            self.move_history.append((row, col, self.current_player))
-            self.board_history.append(self.get_board_state().flatten())
+        assert self.is_valid_move(row, col)
+        child = TicTacToe()
+        child.board = self.board.copy()
 
-            # Update the state of the board based on the move
-            self.board[row, col] = self.current_player
-            self.current_player = (
-                3 - self.current_player
-            )  # Switch players (1 -> 2, 2 -> 1)
-            return True
+        child.parent_board = self
+        self.child_boards[(row, col)] = child
+
+        child.board[row, col] = self.current_player
+
+        if self.current_player == 1:
+            child.current_player = 2
         else:
-            return False
+            child.current_player = 1
+
+        return child
 
     def get_max_squares(self, row, col, player):
         """
@@ -112,188 +119,29 @@ class TicTacToe:
     def is_board_full(self):
         return np.all(self.board != 0)
 
-    def reset(self):
-        self.board = np.zeros((3, 3), dtype=int)
-        self.current_player = 1
-        self.move_history = []
-        self.board_history = []
-
     def get_board_state(self):
         return self.board.copy()
 
-    def copy(self):
-        new_game = TicTacToe()
-        new_game.board = self.board.copy()
-        new_game.current_player = self.current_player
-        new_game.move_history = self.move_history[:]
-        new_game.board_history = self.board_history[:]
-        return new_game
 
-    def copy_until_move(self, move_index):
-        new_game = TicTacToe()
-        for row, col, _ in self.move_history[:move_index]:
-            new_game.make_move(row, col)
-        return new_game
-
-
-class GameStats:
-    def __init__(self, name):
-        self.name = name
-        self.wins = 0
-        self.losses = 0
-        self.draws = 0
-
-    def add_win(self):
-        self.wins += 1
-
-    def add_loss(self):
-        self.losses += 1
-
-    def add_draw(self):
-        self.draws += 1
-
-    def __str__(self):
-        total_games = self.wins + self.losses + self.draws
-        win_percentage = (
-            (self.wins / total_games * 100) if total_games > 0 else 0
-        )
-        return f"Total Wins ({self.name}): {self.wins}, Losses ({self.name}): {self.losses}, Draws ({self.name}): {self.draws}, Win percentage ({self.name}): {win_percentage:.2f}%"
-
-
-def calculate_reward(game, move_index):
-    """Calculates the reward for a move at a specific index in the game history."""
-    before_game = game.copy_until_move(move_index)
-    after_game = game.copy_until_move(move_index + 1)
-
-    player = before_game.current_player
-    opponent = after_game.current_player
-
-    player_wins = False
-    opponent_will_win = False
-
-    if after_game.check_winner() == player:
-        # Current player wins on this turn
-        player_wins = True
-
-    # Check if the opponent can win on their next turn
-    opponent_next_moves = [
-        (r, c)
-        for r in range(3)
-        for c in range(3)
-        if after_game.board[r, c] == 0
-    ]
-    for next_row, next_col in opponent_next_moves:
-        temp_game = after_game.copy()
-        temp_game.make_move(next_row, next_col)
-
-        if temp_game.check_winner() == opponent:
-            opponent_will_win = True
-
-    row, col, player = game.move_history[move_index]
-
-    # Check if the opponent has any squares filled in the row, column,
-    # or diagonal of the last play.
-    (
-        opponent_col_present,
-        opponent_row_present,
-        opponent_diag_present,
-        opponent_diag_right_present,
-    ) = before_game.get_max_squares(row, col, opponent)
-
-    # Check if the player gained additional squares during this move
-    (
-        before_col_present,
-        before_row_present,
-        before_diag_present,
-        before_diag_right_present,
-    ) = before_game.get_max_squares(row, col, player)
-    (
-        after_col_present,
-        after_row_present,
-        after_diag_present,
-        after_diag_right,
-    ) = after_game.get_max_squares(row, col, player)
-
-    player_increased_squares = (
-        (
-            before_col_present >= 1
-            and after_col_present > before_col_present
-            and opponent_col_present == 0
-        )
-        or (
-            before_row_present >= 1
-            and after_row_present > before_row_present
-            and opponent_row_present == 0
-        )
-        or (
-            before_diag_present >= 1
-            and after_diag_present > before_diag_present
-            and opponent_diag_present == 0
-        )
-        or (
-            before_diag_right_present >= 1
-            and after_diag_right > before_diag_right_present
-            and opponent_diag_right_present == 0
-        )
-    )
-
-    winner = game.check_winner()
-
-    if player_wins:
-        return 1.0
-    elif opponent_will_win:
-        return -1
-    elif player_increased_squares:
-        return 0.5
-    elif player == winner:
-        return 0
-    elif opponent == winner:
-        return 0
-    else:
-        return 0
-
-
-def create_training_examples(game, data):
-    """Creates TrainingExample instances from a completed game."""
-    for move_index, (row, col, player) in enumerate(game.move_history):
-        # Get the board state before this move
-        board_state = game.board_history[move_index]
-
-        # Create a one-hot vector for the move
-        move_one_hot = np.zeros(9)
-        move_one_hot[row * 3 + col] = 1
-
-        # Calculate reward relative to the player who made the move
-        reward = calculate_reward(game, move_index)
-        data.append(
-            TrainingExample(
-                board_state=board_state,
-                move_one_hot=move_one_hot,
-                reward=reward,
-            )
-        )
-
-        if data and len(data) % 100_000 == 0:
-            print(f"Generated {len(data)} data points...")
-
-
-def generate_all_games(game, data, player_stats):
-    """
-    Recursively generates all possible Tic-Tac-Toe games and extracts training data.
-    """
+def generate_all_games(game, counter):
     winner = game.check_winner()
     if winner != 0 or game.is_board_full():
-        if winner == 2:
-            player_stats[0].add_loss()
-            player_stats[1].add_win()
-        elif winner == 1:
-            player_stats[0].add_win()
-            player_stats[1].add_loss()
+        if winner == 1:
+            assert game.current_player == 2
+            game.win_probability_x = 1.0
+            game.win_probability_o = 0.0
+        elif winner == 2:
+            assert game.current_player == 1
+            game.win_probability_x = 0.0
+            game.win_probability_o = 1.0
         else:
-            player_stats[0].add_draw()
-            player_stats[1].add_draw()
+            game.win_probability_x = 0.5
+            game.win_probability_o = 0.5
 
-        create_training_examples(game, data)
+        counter[0] += 1
+        if counter[0] and counter[0] % 100_000 == 0:
+            print(f"Generated {counter[0]} games")
+
         return
 
     empty_cells = [
@@ -301,9 +149,49 @@ def generate_all_games(game, data, player_stats):
     ]
 
     for row, col in empty_cells:
-        new_game = game.copy()
-        assert new_game.make_move(row, col)
-        generate_all_games(new_game, data, player_stats)
+        new_game = game.make_move(row, col)
+        generate_all_games(new_game, counter)
+
+    if game.win_probability_x is None and game.win_probability_o is None:
+        game.win_probability_x = sum(
+            child.win_probability_x for child in new_game.child_boards.values()
+        ) / len(game.child_boards)
+
+        game.win_probability_o = 1 - new_game.win_probability_x
+    else:
+        assert game.check_winner() != 0 or game.is_board_full()
+
+
+def iterate_games(parent):
+    for (row, col), child in parent.child_boards.items():
+        yield row, col, child
+        yield from iterate_games(child)
+
+
+def create_training_example(row, col, game):
+    # Create a one-hot vector for the move
+    move_one_hot = np.zeros(9)
+    move_one_hot[row * 3 + col] = 1
+
+    # The current player is who is playing next, but we want
+    # who played last time.
+    last_player = 3 - game.current_player
+
+    if last_player == 1:
+        reward = game.win_probability_x
+    elif last_player == 2:
+        reward = game.win_probability_o
+    else:
+        assert False
+
+    return TrainingExample(
+        board_state=game.parent_board.get_board_state(),
+        move_one_hot=move_one_hot,
+        reward=reward,
+        row=row,
+        col=col,
+        last_player=last_player,
+    )
 
 
 def generate_training_data():
@@ -313,12 +201,14 @@ def generate_training_data():
     print("Generating all possible games...")
 
     game = TicTacToe()
+    counter = [0]
+    generate_all_games(game, counter)
+
     data = []
-    player_stats = [GameStats("First"), GameStats("Second")]
-    generate_all_games(game, data, player_stats)
-    print("Finished generating data.")
-    print(player_stats[0])
-    print(player_stats[1])
+    for row, col, child in iterate_games(game):
+        data.append(create_training_example(row, col, child))
+
+    print(f"Finished generating data. {counter[0]} examples")
     return data
 
 
@@ -518,13 +408,9 @@ def inspect_data(data):
     print(board_state)
     print("-" * 10)
 
-    row, col = (
-        np.where(random_example.move_one_hot == 1)[0][0] // 3,
-        np.where(random_example.move_one_hot == 1)[0][0] % 3,
-    )
-
     # Print the move and reward
-    print(f"Player 2 Move: ({row}, {col})")
+    print(f"Player: {random_example.last_player}")
+    print(f"Move:   ({random_example.row}, {random_example.col})")
     print(f"Reward: {random_example.reward}")
     print("-" * 20)
 
