@@ -14,7 +14,7 @@ from tensorflow.keras.callbacks import Callback
 
 @dataclass
 class TrainingExample:
-    board_state: np.ndarray
+    board_state_one_hot: np.ndarray
     move_one_hot: np.ndarray
     reward: float
     row: int
@@ -119,8 +119,18 @@ class TicTacToe:
     def is_board_full(self):
         return np.all(self.board != 0)
 
-    def get_board_state(self):
-        return self.board.copy()
+    def one_hot_board(self):
+        """Converts a 3x3 board to a 3x3x3 one-hot tensor."""
+        one_hot_board = np.zeros((3, 3, 3), dtype=int)
+        for r in range(3):
+            for c in range(3):
+                if self.board[r, c] == 0:
+                    one_hot_board[r, c, 0] = 1
+                elif self.board[r, c] == 1:
+                    one_hot_board[r, c, 1] = 1
+                elif self.board[r, c] == 2:
+                    one_hot_board[r, c, 2] = 1
+        return one_hot_board
 
 
 def generate_all_games(game, counter):
@@ -185,7 +195,7 @@ def create_training_example(row, col, game):
         assert False
 
     return TrainingExample(
-        board_state=game.parent_board.get_board_state().flatten(),
+        board_state_one_hot=game.parent_board.one_hot_board(),
         move_one_hot=move_one_hot,
         reward=reward,
         row=row,
@@ -214,8 +224,14 @@ def generate_training_data():
 
 def create_model():
     """Creates a simple neural network model for Tic-Tac-Toe."""
-    board_input = keras.Input(shape=(9,), name="board_input")
-    x = layers.Dense(64, activation="relu")(board_input)
+    board_input = keras.Input(shape=(3, 3, 3), name="board_input")
+    # Use Conv2D to take advantage of spatial relationships
+    x = layers.Conv2D(32, (3, 3), activation="relu", padding="same")(
+        board_input
+    )
+    x = layers.Flatten()(x)  # Flatten after convolution
+    x = layers.Dense(128, activation="relu")(x)
+    x = layers.Dense(64, activation="relu")(x)
     x = layers.Dense(32, activation="relu")(x)
 
     move_output = layers.Dense(9, activation="sigmoid", name="move_output")(x)
@@ -260,7 +276,7 @@ class TestAccuracyCallback(Callback):
 
 
 def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
-    X = np.array([example.board_state for example in data])
+    X = np.array([example.board_state_one_hot for example in data])
     y_move = np.array([example.move_one_hot for example in data])
     y_reward = np.array([example.reward for example in data])
 
@@ -302,10 +318,9 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     return model
 
 
-def predict_next_move(model, board_state, game):
+def predict_next_move(model, game):
     """Predicts the next move based on the current board state using a weighted coin flip."""
-    board_state_array = np.array(board_state).reshape(1, 9)
-    predictions = model.predict(board_state_array, verbose=0)
+    predictions = model.predict(game.one_hot(), verbose=0)
     move_probabilities = predictions[0][0]  # Extract the move probabilities
 
     # Mask out invalid moves
@@ -351,7 +366,8 @@ def play_game(model, human_player):
                 try:
                     row = int(input("Enter row (0-2): "))
                     col = int(input("Enter column (0-2): "))
-                    if game.make_move(row, col):
+                    if game.is_valid_move(row, col):
+                        game = game.make_move(row, col)
                         break
                     else:
                         print("Invalid move. Try again.")
@@ -363,11 +379,10 @@ def play_game(model, human_player):
             else:
                 print("Model (O) is thinking...")
 
-            board_state = game.get_board_state().flatten()
-            predicted_move = predict_next_move(model, board_state, game)
+            predicted_move = predict_next_move(model, game)
             row, col = predicted_move
             print(f"Model plays at: ({row}, {col})")
-            assert game.make_move(row, col)
+            game = game.make_move(row, col)
 
         winner = game.check_winner()
         if winner != 0:
@@ -403,8 +418,19 @@ def inspect_data(data):
     print("Random Game Inspection:")
     print("-" * 20)
 
-    board_state = random_example.board_state.reshape((3, 3))
-    print("Board State:")
+    # Convert one-hot to board state
+    board_state_one_hot = random_example.board_state_one_hot.reshape((3, 3, 3))
+    board_state = np.zeros((3, 3), dtype=int)
+    for r in range(3):
+        for c in range(3):
+            if board_state_one_hot[r, c, 0] == 1:
+                board_state[r, c] = 0
+            elif board_state_one_hot[r, c, 1] == 1:
+                board_state[r, c] = 1
+            elif board_state_one_hot[r, c, 2] == 1:
+                board_state[r, c] = 2
+
+    print("Board State (0=empty, 1=X, 2=O):")
     print(board_state)
     print("-" * 10)
 
