@@ -215,17 +215,24 @@ def calculate_reward(game, move_index):
     ) = after_game.get_max_squares(row, col, player)
 
     player_increased_squares = (
-        (after_col_present > before_col_present and opponent_col_present == 0)
+        (
+            before_col_present >= 1
+            and after_col_present > before_col_present
+            and opponent_col_present == 0
+        )
         or (
-            after_row_present > before_row_present
+            before_row_present >= 1
+            and after_row_present > before_row_present
             and opponent_row_present == 0
         )
         or (
-            after_diag_present > before_diag_present
+            before_diag_present >= 1
+            and after_diag_present > before_diag_present
             and opponent_diag_present == 0
         )
         or (
-            after_diag_right > before_diag_right_present
+            before_diag_right_present >= 1
+            and after_diag_right > before_diag_right_present
             and opponent_diag_right_present == 0
         )
     )
@@ -239,9 +246,9 @@ def calculate_reward(game, move_index):
     elif player_increased_squares:
         return 0.5
     elif player == winner:
-        return 0.1
+        return 0
     elif opponent == winner:
-        return -0.1
+        return 0
     else:
         return 0
 
