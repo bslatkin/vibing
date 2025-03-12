@@ -187,10 +187,13 @@ def create_training_example(row, col, game):
     # who played last time.
     last_player = 3 - game.current_player
 
+    change_x = game.win_probability_x - game.parent_board.win_probability_x
+    change_o = game.win_probability_o - game.parent_board.win_probability_o
+
     if last_player == 1:
-        reward = game.win_probability_x
+        reward = game.win_probability_x - change_o
     elif last_player == 2:
-        reward = game.win_probability_o
+        reward = game.win_probability_o - change_x
     else:
         assert False
 
@@ -226,11 +229,12 @@ def create_model():
     """Creates a simple neural network model for Tic-Tac-Toe."""
     board_input = keras.Input(shape=(3, 3, 3), name="board_input")
     # Use Conv2D to take advantage of spatial relationships
-    x = layers.Conv2D(32, (3, 3), activation="relu", padding="same")(
+    x = layers.Conv2D(128, (3, 3), activation="relu", padding="same")(
         board_input
     )
     x = layers.Flatten()(x)  # Flatten after convolution
     x = layers.Dense(128, activation="relu")(x)
+    x = layers.Dense(64, activation="relu")(x)
     x = layers.Dense(64, activation="relu")(x)
     x = layers.Dense(32, activation="relu")(x)
 
@@ -319,7 +323,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
 
 
 def predict_next_move(model, game):
-    """Predicts the next move based on the current board state using a weighted coin flip."""
+    """Predicts the next move based on the current board state."""
     one_hot_board = game.one_hot_board()
     # Add a batch dimension to the input
     one_hot_board = np.expand_dims(
