@@ -297,7 +297,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
             "move_output": "categorical_crossentropy",
             "reward_output": "mse",
         },
-        loss_weights={"move_output": 0.5, "reward_output": 0.5},
+        loss_weights={"move_output": 0.2, "reward_output": 0.8},
         metrics={"move_output": "accuracy", "reward_output": "mse"},
     )
 
@@ -320,7 +320,12 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
 
 def predict_next_move(model, game):
     """Predicts the next move based on the current board state using a weighted coin flip."""
-    predictions = model.predict(game.one_hot(), verbose=0)
+    one_hot_board = game.one_hot_board()
+    # Add a batch dimension to the input
+    one_hot_board = np.expand_dims(
+        one_hot_board, axis=0
+    )  # Add batch dimension
+    predictions = model.predict(one_hot_board, verbose=0)
     move_probabilities = predictions[0][0]  # Extract the move probabilities
 
     # Mask out invalid moves
