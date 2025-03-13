@@ -180,19 +180,6 @@ def generate_all_games(game, counter):
                 current = current.parent_board
                 i += 1
 
-        # else:
-        #     i = 1
-        #     current = game
-        #     while current:
-        #         current.win_probability_x = max(
-        #             0.5 / i, current.win_probability_x
-        #         )
-        #         current.win_probability_o = max(
-        #             0.5 / i, current.win_probability_o
-        #         )
-        #         current = current.parent_board
-        #         i += 1
-
         counter[0] += 1
         if counter[0] and counter[0] % 100_000 == 0:
             print(f"Generated {counter[0]} games")
@@ -224,9 +211,9 @@ def create_training_example(row, col, game):
     last_player = 3 - game.current_player
 
     if last_player == 1:
-        reward = game.win_probability_x
+        reward = game.win_probability_x - game.win_probability_o
     elif last_player == 2:
-        reward = game.win_probability_o
+        reward = game.win_probability_o - game.win_probability_x
     else:
         assert False
 
@@ -274,7 +261,7 @@ def create_model():
     # Reward output
     reward_output = layers.Dense(
         1,
-        activation="sigmoid",
+        activation="tanh",
         name="reward_output",
     )(interaction_x)
 
