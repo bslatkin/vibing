@@ -17,17 +17,13 @@ from tensorflow.keras.callbacks import Callback
 class TrainingExample:
     board_state_one_hot: np.ndarray
     move_one_hot: np.ndarray
-    win_x: float
-    win_o: float
-    reward: float
-    row: int
-    col: int
     last_player: int
 
 
 @dataclass
 class TrainingSequence:
     examples: list[TrainingExample]
+    reward: float
 
 
 class TicTacToe:
@@ -150,18 +146,6 @@ def probability_mean(values_iter):
 def generate_all_games(game, all_games):
     winner = game.check_winner()
     if winner != 0 or game.is_board_full():
-        if winner == 1:
-            assert game.current_player == 2
-            game.win_probability_x = 1.0
-            game.win_probability_o = 0.0
-        elif winner == 2:
-            assert game.current_player == 1
-            game.win_probability_x = 0.0
-            game.win_probability_o = 1.0
-        else:
-            game.win_probability_x = 0.0
-            game.win_probability_o = 0.0
-
         all_games.append(game)
 
         if all_games and len(all_games) % 100_000 == 0:
@@ -173,32 +157,9 @@ def generate_all_games(game, all_games):
         (r, c) for r in range(3) for c in range(3) if game.board[r, c] == 0
     ]
 
-    any_winners = False
     for row, col in empty_cells:
         new_game = game.make_move(row, col)
         generate_all_games(new_game, all_games)
-        if new_game.check_winner() != 0:
-            any_winners = True
-
-    if any_winners:
-        # If any of the children are winners, then count all of the
-        # non-winning siblings as examples that will lose, to further
-        # emphasize that they shouldn't be chosen. Also, remove those
-        # losing sibling's children from the training set entirely.
-        for child in game.child_boards.values():
-            if child.check_winner() == 0:
-                child.win_probability_x = 0.0
-                child.win_probability_o = 0.0
-
-    if game.win_probability_x is None:
-        game.win_probability_x = max(
-            child.win_probability_x for child in game.child_boards.values()
-        )
-
-    if game.win_probability_o is None:
-        game.win_probability_o = max(
-            child.win_probability_o for child in game.child_boards.values()
-        )
 
 
 def pad_examples(examples):
@@ -218,12 +179,6 @@ def pad_examples(examples):
         empty_example = TrainingExample(
             board_state_one_hot=np.zeros((3, 3, 3)),
             move_one_hot=np.zeros(9),
-            win_x=0.0,
-            win_o=0.0,
-            reward=0.0,
-            # XXX should these placeholder values be negative?
-            row=-1,
-            col=-1,
             last_player=-1,
         )
         examples.insert(0, empty_example)
@@ -244,23 +199,12 @@ def create_training_examples(game):
         else:
             assert False
 
-        # Create a one-hot vector for the move
         move_one_hot = np.zeros(9)
         move_one_hot[row * 3 + col] = 1
-
-        if parent.current_player == 1:
-            reward = current.win_probability_x
-        else:
-            reward = current.win_probability_o
 
         example = TrainingExample(
             board_state_one_hot=parent.one_hot_board(),
             move_one_hot=move_one_hot,
-            reward=reward,
-            win_x=current.win_probability_x,
-            win_o=current.win_probability_o,
-            row=row,
-            col=col,
             last_player=0.0 if parent.current_player == 1 else 1.0,
         )
         result.insert(0, example)
@@ -269,7 +213,10 @@ def create_training_examples(game):
 
     pad_examples(result)
 
-    return TrainingSequence(examples=result)
+    return TrainingSequence(
+        examples=result,
+        reward=1.0 if game.check_winner() == 1 else 0.0,
+    )
 
 
 def generate_training_data():
@@ -330,8 +277,8 @@ def create_transformer_model(
     for _ in range(num_transformer_blocks):
         x = transformer_encoder(x, embedding_dim, num_heads, ff_dim)
 
-    # Reward branch
-    reward_x = layers.GlobalAveragePooling1D()(x)  # Pool across the sequence
+    # Reward branch (single output for the entire sequence)
+    reward_x = layers.GlobalAveragePooling1D()(x)
     reward_x = layers.Dense(128, activation="relu")(reward_x)
     reward_output = layers.Dense(
         1, activation="sigmoid", name="reward_output"
@@ -377,14 +324,17 @@ class TestAccuracyCallback(Callback):
         self.X_test = X_test
         self.y_reward_test = y_reward_test
         self.y_move_test = y_move_test
+        self.sequence_length = sequence_length
 
     def on_epoch_end(self, epoch, logs=None):
+        # Reshape y_move_test to match the output shape
+        y_move_test_reshaped = self.y_move_test[:, -1, :]
         loss, reward_loss, move_loss, reward_mse, move_accuracy = (
             self.model.evaluate(
                 self.X_test,
                 {
                     "reward_output": self.y_reward_test,
-                    "move_output": self.y_move_test,
+                    "move_output": y_move_test_reshaped,
                 },
                 verbose=0,
             )
@@ -411,10 +361,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
             for sequence in data
         ]
     )
-    y_reward = np.array(
-        [example.reward for sequence in data for example in sequence.examples]
-    )
-
+    y_reward = np.array([sequence.reward for sequence in data])
     (
         X_board_train,
         X_board_test,
@@ -447,17 +394,9 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
         X_board_test, y_reward_test, y_move_test, sequence_length=9
     )
 
-    # Reshape y_move_train and y_move_test to be flat
-    y_move_train = y_move_train.reshape(-1, 9)
-    y_move_test = y_move_test.reshape(-1, 9)
-
-    # Repeat y_reward_train and y_reward_test to match the number of moves
-    y_reward_train = np.repeat(y_reward_train, 9)
-    y_reward_test = np.repeat(y_reward_test, 9)
-
-    # Reshape X_board_train and X_board_test to be flat
-    X_board_train = X_board_train.reshape(-1, 3, 3, 3)
-    X_board_test = X_board_test.reshape(-1, 3, 3, 3)
+    # Reshape y_move_train and y_move_test to be flat for the move output
+    y_move_train = y_move_train[:, -1, :]
+    y_move_test = y_move_test[:, -1, :]
 
     model.fit(
         {"board_input": X_board_train},
@@ -469,7 +408,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     return model
 
 
-def predict_next_move(model, game):
+def predict_next_move(model, game, optimize_for_win):
     """Predicts the next move based on the current board state."""
     one_hot_board = game.one_hot_board()
     # Add a batch dimension to the input
@@ -482,6 +421,10 @@ def predict_next_move(model, game):
 
     predictions = model.predict({"board_input": board_sequence}, verbose=0)
     move_probabilities = predictions[1][0]
+
+    if not optimize_for_win:
+        # Invert the probabilities to optimize for losing
+        move_probabilities = 1 - move_probabilities
 
     # Mask out invalid moves
     for i in range(9):
@@ -515,7 +458,6 @@ def play_game(model, human_player):
         print(game.board)
 
         if game.current_player == human_player:
-
             if human_player == 1:
                 print("Your turn (X)")
             else:
@@ -539,7 +481,7 @@ def play_game(model, human_player):
             else:
                 print("Model (O) is thinking...")
 
-            predicted_move = predict_next_move(model, game)
+            predicted_move = predict_next_move(model, game, human_player == 1)
             row, col = predicted_move
             print(f"Model plays at: ({row}, {col})")
             game = game.make_move(row, col)
@@ -592,26 +534,28 @@ def inspect_data(data: list[TrainingSequence]):
     selected_sequence = data[selected_example_index]
 
     print(f"Inspecting sequence {selected_example_index}:")
+    print(f"Reward: {selected_sequence.reward}")
 
     for i, example in enumerate(selected_sequence.examples):
-        if example.row == -1:
+        if np.all(example.move_one_hot == 0):
             continue
 
         print(f"\nExample {i+1} in sequence:")
         print("-" * 20)
 
         # Print the board state
-        print("  Board State (0=empty, 1=X, 2=O):")
+        print("Board State (0=empty, 1=X, 2=O):")
         board_state = one_hot_to_board(example.board_state_one_hot)
         print(board_state)
 
+        # Extract the row and column from the one-hot encoded move
+        move_index = np.argmax(example.move_one_hot)
+        row = move_index // 3
+        col = move_index % 3
+
         # Print the move details
-        if example.row != -1:
-            print(f"  Player: {'O' if example.last_player == 1 else 'X'}")
-            print(f"  Move:   ({example.row}, {example.col})")
-            print(f"  Win probability X: {example.win_x}")
-            print(f"  Win probability O: {example.win_o}")
-            print(f"  Reward: {example.reward}")
+        print(f"Player: {'O' if example.last_player == 1 else 'X'}")
+        print(f"Move:   ({row}, {col})")
 
         print("-" * 20)
 
@@ -729,6 +673,7 @@ def main():
         print("Playing game...")
         model_path = os.path.join(args.data_dir, args.model_file)
         model = load_model(model_path)
+        optimize_for_win = True
         play_game(model, args.human_player)
 
     else:
