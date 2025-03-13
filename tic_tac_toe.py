@@ -292,7 +292,8 @@ def create_transformer_model(
     )
 
     model = keras.Model(
-        inputs=[board_input], outputs=[reward_output, move_output]
+        inputs={"board_input": board_input},
+        outputs=[reward_output, move_output],
     )
     return model
 
