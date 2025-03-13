@@ -172,12 +172,12 @@ def generate_all_games(game, counter):
         generate_all_games(new_game, counter)
 
     if game.win_probability_x is None:
-        game.win_probability_x = max(
+        game.win_probability_x = probability_mean(
             child.win_probability_x for child in game.child_boards.values()
         )
 
     if game.win_probability_o is None:
-        game.win_probability_o = max(
+        game.win_probability_o = probability_mean(
             child.win_probability_o for child in game.child_boards.values()
         )
 
@@ -197,12 +197,10 @@ def create_training_example(row, col, game):
     # who played last time.
     last_player = 3 - game.current_player
 
-    if game.win_probability_x and game.win_probability_o:
-        reward = max(game.win_probability_x, game.win_probability_o)
-    elif last_player == 1:
-        reward = game.win_probability_x
+    if last_player == 1:
+        reward = game.win_probability_x - game.win_probability_o
     else:
-        reward = game.win_probability_o
+        reward = game.win_probability_o - game.win_probability_x
 
     return TrainingExample(
         board_state_one_hot=game.parent_board.one_hot_board(),
@@ -226,11 +224,17 @@ def generate_training_data():
     counter = [0]
     generate_all_games(game, counter)
 
+    seen_games = set()
     data = []
     for row, col, child in iterate_games(game):
+        move_key = (row, col, tuple(child.board.flatten()))
+        if move_key in seen_games:
+            continue
+        seen_games.add(move_key)
+
         data.append(create_training_example(row, col, child))
 
-    print(f"Finished generating data. {counter[0]} examples")
+    print(f"Finished generating data. {len(data)} unique examples")
     return data
 
 
@@ -268,7 +272,7 @@ def create_model():
     # Reward output
     reward_output = layers.Dense(
         1,
-        activation="sigmoid",
+        activation="tanh",
         name="reward_output",
     )(interaction_x)
 
@@ -458,37 +462,52 @@ def one_hot_to_board(board_state_one_hot):
     return board_state
 
 
-def inspect_data(data, num_examples=10):
-    """Inspects the generated test data and prints out a set of games around a random index."""
+def inspect_data(data):
+    """Inspects the generated test data and prints out a set of moves with the same parent."""
     if not data:
         print("No data to inspect.")
         return
 
-    random_index = random.randint(0, len(data) - 1)
-    start_index = max(0, random_index - num_examples)
-    end_index = min(len(data), random_index + num_examples + 1)
+    # Select a random example
+    selected_example_index = random.randint(0, len(data) - 1)
+    selected_example = data[selected_example_index]
+
+    # Find all examples with the same parent board
+    sibling_examples = []
+    for example in data:
+        if np.array_equal(
+            example.board_state_one_hot,
+            selected_example.board_state_one_hot,
+        ):
+            sibling_examples.append(example)
 
     print(
-        f"Inspecting examples around index {random_index} (from {start_index} to {end_index}):"
+        f"Inspecting examples with the same parent board as example {selected_example_index}:"
     )
 
-    for i in range(start_index, end_index):
-        example = data[i]
-        print(f"\nExample {i}:")
-        print("-" * 20)
+    # Print the parent board state
+    print("\nParent Board State (0=empty, 1=X, 2=O):")
+    parent_board_state = one_hot_to_board(selected_example.board_state_one_hot)
+    print(parent_board_state)
+    print("-" * 20)
 
-        # Convert one-hot to board state
-        board_state = one_hot_to_board(example.board_state_one_hot)
-        print("Board State (0=empty, 1=X, 2=O):")
-        print(board_state)
+    # Print details for each sibling example
+    for i, example in enumerate(sibling_examples):
+        print(f"\nSibling Example {i+1}:")
         print("-" * 10)
 
         # Print the move and reward
-        print(f"Player: {example.last_player}")
-        print(f"Move:   ({example.row}, {example.col})")
-        print(f"Win probability X: {example.win_x}")
-        print(f"Win probability O: {example.win_o}")
-        print(f"Reward: {example.reward}")
+        print(f"  Player: {example.last_player}")
+        print(f"  Move:   ({example.row}, {example.col})")
+        print(f"  Win probability X: {example.win_x}")
+        print(f"  Win probability O: {example.win_o}")
+        print(f"  Reward: {example.reward}")
+
+        # Print the child board state
+        child_board_state = parent_board_state.copy()
+        child_board_state[example.row, example.col] = example.last_player
+        print("  Child Board State:")
+        print(child_board_state)
         print("-" * 20)
 
 
