@@ -25,6 +25,11 @@ class TrainingExample:
     last_player: int
 
 
+@dataclass
+class TrainingSequence:
+    examples: list[TrainingExample]
+
+
 class TicTacToe:
     def __init__(self):
         self.board = np.zeros((3, 3), dtype=int)
@@ -142,7 +147,7 @@ def probability_mean(values_iter):
     return total / len(values)
 
 
-def generate_all_games(game, counter):
+def generate_all_games(game, all_games):
     winner = game.check_winner()
     if winner != 0 or game.is_board_full():
         if winner == 1:
@@ -157,9 +162,10 @@ def generate_all_games(game, counter):
             game.win_probability_x = 0.0
             game.win_probability_o = 0.0
 
-        counter[0] += 1
-        if counter[0] and counter[0] % 100_000 == 0:
-            print(f"Generated {counter[0]} games")
+        all_games.append(game)
+
+        if all_games and len(all_games) % 100_000 == 0:
+            print(f"Generated {len(all_games)} games")
 
         return
 
@@ -170,7 +176,7 @@ def generate_all_games(game, counter):
     any_winners = False
     for row, col in empty_cells:
         new_game = game.make_move(row, col)
-        generate_all_games(new_game, counter)
+        generate_all_games(new_game, all_games)
         if new_game.check_winner() != 0:
             any_winners = True
 
@@ -183,7 +189,6 @@ def generate_all_games(game, counter):
             if child.check_winner() == 0:
                 child.win_probability_x = 0.0
                 child.win_probability_o = 0.0
-                child.child_boards.clear()
 
     if game.win_probability_x is None:
         game.win_probability_x = max(
@@ -196,36 +201,75 @@ def generate_all_games(game, counter):
         )
 
 
-def iterate_games(parent):
-    for (row, col), child in parent.child_boards.items():
-        yield row, col, child
-        yield from iterate_games(child)
+def pad_examples(examples):
+    """
+    Pads a list of TrainingExample objects with empty examples to ensure
+    a fixed sequence length.
+    """
+    max_len = 9
+    current_len = len(examples)
+
+    if current_len >= max_len:
+        return
+
+    padding_needed = max_len - current_len
+
+    for _ in range(padding_needed):
+        empty_example = TrainingExample(
+            board_state_one_hot=np.zeros((3, 3, 3)),
+            move_one_hot=np.zeros(9),
+            win_x=0.0,
+            win_o=0.0,
+            reward=0.0,
+            # XXX should these placeholder values be negative?
+            row=-1,
+            col=-1,
+            last_player=-1,
+        )
+        examples.insert(0, empty_example)
 
 
-def create_training_example(row, col, game):
-    # Create a one-hot vector for the move
-    move_one_hot = np.zeros(9)
-    move_one_hot[row * 3 + col] = 1
+def create_training_examples(game):
+    result = []
 
-    # The current player is who is playing next, but we want
-    # who played last time.
-    last_player = 3 - game.current_player
+    current = game
+    while current:
+        parent = current.parent_board
+        if not parent:
+            break
 
-    if last_player == 1:
-        reward = game.win_probability_x
-    else:
-        reward = game.win_probability_o
+        for (row, col), child in parent.child_boards.items():
+            if child is current:
+                break
+        else:
+            assert False
 
-    return TrainingExample(
-        board_state_one_hot=game.parent_board.one_hot_board(),
-        move_one_hot=move_one_hot,
-        reward=reward,
-        win_x=game.win_probability_x,
-        win_o=game.win_probability_o,
-        row=row,
-        col=col,
-        last_player=last_player,
-    )
+        # Create a one-hot vector for the move
+        move_one_hot = np.zeros(9)
+        move_one_hot[row * 3 + col] = 1
+
+        if parent.current_player == 1:
+            reward = game.win_probability_x
+        else:
+            reward = game.win_probability_o
+
+        example = TrainingExample(
+            board_state_one_hot=game.parent_board.one_hot_board(),
+            move_one_hot=move_one_hot,
+            reward=reward,
+            win_x=game.win_probability_x,
+            win_o=game.win_probability_o,
+            row=row,
+            col=col,
+            last_player=0.0 if parent.current_player == 1 else 1.0,
+        )
+        result.insert(0, example)
+
+        current = parent
+
+    pad_examples(result)
+
+    return TrainingSequence(examples=result)
 
 
 def generate_training_data():
@@ -235,76 +279,90 @@ def generate_training_data():
     print("Generating all possible games...")
 
     game = TicTacToe()
-    counter = [0]
-    generate_all_games(game, counter)
+    all_games = []
+    generate_all_games(game, all_games)
+    print(f"Finished generating data. {len(all_games)} games")
 
-    seen_games = set()
     data = []
-    for row, col, child in iterate_games(game):
-        move_key = (row, col, tuple(child.board.flatten()))
-        if move_key in seen_games:
-            continue
-        seen_games.add(move_key)
+    for game in all_games:
+        if data and len(data) % 100_000 == 0:
+            print(f"Generated {len(data)} examples")
+        data.append(create_training_examples(game))
 
-        data.append(create_training_example(row, col, child))
+    print(f"Finished generating examples. {len(data)} examples")
 
-    print(f"Finished generating data. {len(data)} unique examples")
     return data
 
 
-def create_model():
-    """Creates a model for Tic-Tac-Toe with two output heads: reward and move."""
-    board_input = keras.Input(shape=(3, 3, 3), name="board_input")
-
-    x = layers.Flatten()(board_input)
-
-    # Shared layers (the "trunk")
-    shared_x = layers.Dense(
-        1024,
-        activation="relu",
-        kernel_regularizer=regularizers.l2(0.001),
-    )(x)
-    shared_x = layers.Dense(
-        512,
-        activation="relu",
-        kernel_regularizer=regularizers.l2(0.001),
-    )(shared_x)
-    shared_x = layers.Dense(
-        256,
-        activation="relu",
-        kernel_regularizer=regularizers.l2(0.001),
-    )(shared_x)
-
-    # Reward branch
-    reward_x = layers.Dense(
-        128,
-        activation="relu",
-        kernel_regularizer=regularizers.l2(0.001),
-    )(shared_x)
-    reward_output = layers.Dense(
-        1,
-        activation="sigmoid",
-        name="reward_output",
-    )(reward_x)
-
-    # Move location branch
-    move_x = layers.Dense(
-        128,
-        activation="relu",
-        kernel_regularizer=regularizers.l2(0.001),
-    )(shared_x)
-    move_output = layers.Dense(
-        9,
-        activation="softmax",
-        name="move_output",
-    )(move_x)
-
-    model = keras.Model(
-        inputs=[board_input],
-        outputs=[reward_output, move_output],
+def create_transformer_model(
+    sequence_length=9,
+    embedding_dim=64,
+    num_heads=4,
+    ff_dim=128,
+    num_transformer_blocks=2,
+):
+    # Input: Sequence of board states
+    board_input = keras.Input(
+        shape=(sequence_length, 3, 3, 3), name="board_input"
     )
 
+    # Flatten the board states
+    x = layers.Reshape((sequence_length, 27))(board_input)
+
+    # Embedding layer
+    x = layers.Dense(embedding_dim, activation="relu")(x)
+
+    # Positional encoding (simplified example)
+    positions = np.arange(0, sequence_length)
+    positional_encodings = np.sin(
+        positions[:, np.newaxis]
+        / np.power(10000, np.arange(0, embedding_dim, 2) / embedding_dim)
+    )
+    positional_encodings[:, 1::2] = np.cos(
+        positions[:, np.newaxis]
+        / np.power(10000, np.arange(0, embedding_dim, 2) / embedding_dim)
+    )
+    positional_encodings = tf.constant(positional_encodings, dtype=tf.float32)
+    x = x + positional_encodings
+
+    # Transformer blocks
+    for _ in range(num_transformer_blocks):
+        x = transformer_encoder(x, embedding_dim, num_heads, ff_dim)
+
+    # Reward branch
+    reward_x = layers.GlobalAveragePooling1D()(x)  # Pool across the sequence
+    reward_x = layers.Dense(128, activation="relu")(reward_x)
+    reward_output = layers.Dense(
+        1, activation="sigmoid", name="reward_output"
+    )(reward_x)
+
+    # Move branch
+    move_x = x[:, -1, :]  # Take the last vector in the sequence
+    move_x = layers.Dense(128, activation="relu")(move_x)
+    move_output = layers.Dense(9, activation="softmax", name="move_output")(
+        move_x
+    )
+
+    model = keras.Model(
+        inputs=[board_input], outputs=[reward_output, move_output]
+    )
     return model
+
+
+# Helper function for a transformer block
+def transformer_encoder(inputs, embedding_dim, num_heads, ff_dim):
+    # Attention and Normalization
+    x = layers.MultiHeadAttention(num_heads=num_heads, key_dim=embedding_dim)(
+        inputs, inputs
+    )
+    x = layers.LayerNormalization(epsilon=1e-6)(x)
+    res = x + inputs
+
+    # Feed Forward and Normalization
+    x = layers.Dense(ff_dim, activation="relu")(res)
+    x = layers.Dense(embedding_dim)(x)
+    x = layers.LayerNormalization(epsilon=1e-6)(x)
+    return x + res
 
 
 def one_hot_to_move(move_index):
@@ -313,7 +371,7 @@ def one_hot_to_move(move_index):
 
 
 class TestAccuracyCallback(Callback):
-    def __init__(self, X_test, y_reward_test, y_move_test):
+    def __init__(self, X_test, y_reward_test, y_move_test, sequence_length):
         super().__init__()
         self.X_test = X_test
         self.y_reward_test = y_reward_test
@@ -330,7 +388,6 @@ class TestAccuracyCallback(Callback):
                 verbose=0,
             )
         )
-
         print()
         print(
             f"Epoch {epoch+1}: Reward Loss: {reward_loss:.4f}, Move Loss: {move_loss:.4f}, Reward MSE: {reward_mse:.4f}, Move Accuracy: {move_accuracy:.4f}"
@@ -339,8 +396,22 @@ class TestAccuracyCallback(Callback):
 
 
 def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
-    X_board = np.array([example.board_state_one_hot for example in data])
-    y_move = np.array([example.move_one_hot for example in data])
+    X_board = np.array(
+        [
+            np.array(
+                [example.board_state_one_hot for example in sequence.examples]
+            )
+            for sequence in data
+        ]
+    )
+    y_move = np.array(
+        [
+            np.array([example.move_one_hot for example in sequence.examples])
+            for sequence in data
+        ]
+    )
+    y_move = np.array([sequence[-1] for sequence in y_move])
+
     y_reward = np.array([example.reward for example in data])
 
     (
@@ -372,9 +443,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     )
 
     test_accuracy_callback = TestAccuracyCallback(
-        X_board_test,
-        y_reward_test,
-        y_move_test,
+        X_board_test, y_reward_test, y_move_test, sequence_length=9
     )
 
     model.fit(
@@ -391,9 +460,14 @@ def predict_next_move(model, game):
     """Predicts the next move based on the current board state."""
     one_hot_board = game.one_hot_board()
     # Add a batch dimension to the input
-    one_hot_board = np.expand_dims(one_hot_board, axis=0)
+    # one_hot_board = np.expand_dims(one_hot_board, axis=0)
 
-    predictions = model.predict({"board_input": one_hot_board}, verbose=0)
+    # Create a sequence of board states for the model
+    board_sequence = np.zeros((9, 3, 3, 3))
+    board_sequence[-1] = one_hot_board
+    board_sequence = np.expand_dims(board_sequence, axis=0)
+
+    predictions = model.predict({"board_input": board_sequence}, verbose=0)
     move_probabilities = predictions[1][0]
 
     # Mask out invalid moves
@@ -637,7 +711,7 @@ def main():
         print("Training model...")
         input_path = os.path.join(args.data_dir, args.input_file)
         training_data = load_data(input_path)
-        model = create_model()
+        model = create_transformer_model()
         model = train_model(
             model,
             training_data,
