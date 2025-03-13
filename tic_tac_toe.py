@@ -194,20 +194,17 @@ def create_training_example(row, col, game):
     # who played last time.
     last_player = 3 - game.current_player
 
-    change_x = game.win_probability_x - game.parent_board.win_probability_x
-    change_o = game.win_probability_o - game.parent_board.win_probability_o
-
     if last_player == 1:
-        reward = game.win_probability_x + change_x - change_o
+        reward = game.win_probability_x
     elif last_player == 2:
-        reward = game.win_probability_o + change_o - change_x
+        reward = game.win_probability_o
     else:
         assert False
 
     return TrainingExample(
         board_state_one_hot=game.parent_board.one_hot_board(),
         move_one_hot=move_one_hot,
-        reward=reward / 2,
+        reward=reward,
         row=row,
         col=col,
         last_player=last_player,
