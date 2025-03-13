@@ -8,7 +8,7 @@ from typing import List
 import numpy as np, tensorflow as tf
 from sklearn.model_selection import train_test_split
 from tensorflow import keras
-from tensorflow.keras import layers, initializers
+from tensorflow.keras import layers
 from tensorflow.keras.callbacks import Callback
 
 
@@ -28,8 +28,8 @@ class TicTacToe:
         self.current_player = 1  # Player X starts
         self.parent_board = None
         self.child_boards = {}  # Map (row, col) of the play to the child board
-        self.win_probability_x = 0.0
-        self.win_probability_o = 0.0
+        self.win_probability_x = None
+        self.win_probability_o = None
 
     def is_valid_move(self, row, col):
         return 0 <= row < 3 and 0 <= col < 3 and self.board[row, col] == 0
@@ -137,48 +137,14 @@ def generate_all_games(game, counter):
     winner = game.check_winner()
     if winner != 0 or game.is_board_full():
         if winner == 1:
-            assert game.current_player == 2
-
-            i = 1
-            current = game
-            while current:
-                current.win_probability_x = max(
-                    1.0 / i, current.win_probability_x
-                )
-                current = current.parent_board
-                i += 1
-
+            game.win_probability_x = 1.0
+            game.win_probability_o = 0.0
         elif winner == 2:
-            assert game.current_player == 1
-
-            i = 1
-            current = game
-            while current:
-                current.win_probability_o = max(
-                    1.0 / i, current.win_probability_o
-                )
-                current = current.parent_board
-                i += 1
-        elif game.current_player == 2:
-            # previous player was 1
-            i = 1
-            current = game
-            while current:
-                current.win_probability_x = max(
-                    0.5 / i, current.win_probability_x
-                )
-                current = current.parent_board
-                i += 1
-        elif game.current_player == 1:
-            # previous player was 2
-            i = 1
-            current = game
-            while current:
-                current.win_probability_o = max(
-                    0.5 / i, current.win_probability_o
-                )
-                current = current.parent_board
-                i += 1
+            game.win_probability_x = 0.0
+            game.win_probability_o = 1.0
+        else:
+            game.win_probability_x = 0.5
+            game.win_probability_o = 0.5
 
         counter[0] += 1
         if counter[0] and counter[0] % 100_000 == 0:
@@ -190,9 +156,40 @@ def generate_all_games(game, counter):
         (r, c) for r in range(3) for c in range(3) if game.board[r, c] == 0
     ]
 
+    any_winners = False
+
     for row, col in empty_cells:
         new_game = game.make_move(row, col)
         generate_all_games(new_game, counter)
+        if new_game.check_winner() != 0:
+            any_winners = True
+
+    if any_winners:
+        # If any descendents of this game are winners, that means this move
+        # was bad and enabled the opposing player to win. So clear the child
+        # boards and set the current game's win probability to zero.
+        for child in game.child_boards.values():
+            winner = child.check_winner()
+            if winner == game.current_player:
+                if game.current_player == 1:
+                    game.win_probability_x = 1.0
+                    game.win_probability_o = 0.0
+                elif game.current_player == 2:
+                    game.win_probability_x = 0
+                    game.win_probability_o = 1.0
+
+                game.child_boards.clear()
+                break
+
+    if game.win_probability_x is None:
+        game.win_probability_x = sum(
+            child.win_probability_x for child in game.child_boards.values()
+        ) / len(game.child_boards)
+
+    if game.win_probability_o is None:
+        game.win_probability_o = sum(
+            child.win_probability_o for child in game.child_boards.values()
+        ) / len(game.child_boards)
 
 
 def iterate_games(parent):
@@ -211,9 +208,9 @@ def create_training_example(row, col, game):
     last_player = 3 - game.current_player
 
     if last_player == 1:
-        reward = game.win_probability_x - game.win_probability_o
+        reward = game.win_probability_x
     elif last_player == 2:
-        reward = game.win_probability_o - game.win_probability_x
+        reward = game.win_probability_o
     else:
         assert False
 
@@ -245,74 +242,28 @@ def generate_training_data():
     return data
 
 
-def custom_weight_initializer(shape, dtype=None):
-    # Generate random values between 0.4 and 0.6
-    return np.random.uniform(low=0.4, high=0.6, size=shape)
-
-
 def create_model():
     """Creates a simple MLP model for Tic-Tac-Toe with custom initialization."""
-
-    # Custom initializer for weights (uniform around 0.5)
-    def custom_weight_initializer(shape, dtype=None):
-        # Generate random values between 0.4 and 0.6
-        return np.random.uniform(low=0.4, high=0.6, size=shape)
-
-    # Custom initializer for biases (constant 0.5)
-    custom_bias_initializer = initializers.Constant(value=0.5)
-
     board_input = keras.Input(shape=(3, 3, 3), name="board_input")
     move_input = keras.Input(shape=(9,), name="move_input")
 
     x = layers.Flatten()(board_input)
-    x = layers.Dense(
-        512,
-        activation="relu",
-        kernel_initializer=custom_weight_initializer,
-        bias_initializer=custom_bias_initializer,
-    )(x)
-    x = layers.Dense(
-        256,
-        activation="relu",
-        kernel_initializer=custom_weight_initializer,
-        bias_initializer=custom_bias_initializer,
-    )(x)
-    x = layers.Dense(
-        128,
-        activation="relu",
-        kernel_initializer=custom_weight_initializer,
-        bias_initializer=custom_bias_initializer,
-    )(x)
+    x = layers.Dense(128, activation="relu")(x)
+    x = layers.Dense(64, activation="relu")(x)
+    x = layers.Dense(32, activation="relu")(x)
 
     combined = layers.concatenate([x, move_input])
 
     # Interaction layers
-    interaction_x = layers.Dense(
-        256,
-        activation="relu",
-        kernel_initializer=custom_weight_initializer,
-        bias_initializer=custom_bias_initializer,
-    )(combined)
-    interaction_x = layers.Dense(
-        128,
-        activation="relu",
-        kernel_initializer=custom_weight_initializer,
-        bias_initializer=custom_bias_initializer,
-    )(interaction_x)
-    interaction_x = layers.Dense(
-        64,
-        activation="relu",
-        kernel_initializer=custom_weight_initializer,
-        bias_initializer=custom_bias_initializer,
-    )(interaction_x)
+    interaction_x = layers.Dense(128, activation="relu")(combined)
+    interaction_x = layers.Dense(64, activation="relu")(interaction_x)
+    interaction_x = layers.Dense(32, activation="relu")(interaction_x)
 
     # Reward output
     reward_output = layers.Dense(
         1,
-        activation="tanh",
+        activation="sigmoid",
         name="reward_output",
-        kernel_initializer=custom_weight_initializer,
-        bias_initializer=custom_bias_initializer,
     )(interaction_x)
 
     model = keras.Model(
@@ -369,7 +320,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
 
     model.compile(
         optimizer="adam",
-        loss={"reward_output": "mse"},
+        loss={"reward_output": "binary_crossentropy"},
         metrics={"reward_output": "mse"},
     )
 
