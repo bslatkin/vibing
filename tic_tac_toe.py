@@ -8,7 +8,7 @@ from typing import List
 import numpy as np, tensorflow as tf
 from sklearn.model_selection import train_test_split
 from tensorflow import keras
-from tensorflow.keras import layers
+from tensorflow.keras import layers, initializers
 from tensorflow.keras.callbacks import Callback
 
 
@@ -245,24 +245,74 @@ def generate_training_data():
     return data
 
 
+def custom_weight_initializer(shape, dtype=None):
+    # Generate random values between 0.4 and 0.6
+    return np.random.uniform(low=0.4, high=0.6, size=shape)
+
+
 def create_model():
-    """Creates a simple MLP model for Tic-Tac-Toe."""
+    """Creates a simple MLP model for Tic-Tac-Toe with custom initialization."""
+
+    # Custom initializer for weights (uniform around 0.5)
+    def custom_weight_initializer(shape, dtype=None):
+        # Generate random values between 0.4 and 0.6
+        return np.random.uniform(low=0.4, high=0.6, size=shape)
+
+    # Custom initializer for biases (constant 0.5)
+    custom_bias_initializer = initializers.Constant(value=0.5)
+
     board_input = keras.Input(shape=(3, 3, 3), name="board_input")
     move_input = keras.Input(shape=(9,), name="move_input")
 
     x = layers.Flatten()(board_input)
+    x = layers.Dense(
+        512,
+        activation="relu",
+        kernel_initializer=custom_weight_initializer,
+        bias_initializer=custom_bias_initializer,
+    )(x)
+    x = layers.Dense(
+        256,
+        activation="relu",
+        kernel_initializer=custom_weight_initializer,
+        bias_initializer=custom_bias_initializer,
+    )(x)
+    x = layers.Dense(
+        128,
+        activation="relu",
+        kernel_initializer=custom_weight_initializer,
+        bias_initializer=custom_bias_initializer,
+    )(x)
+
     combined = layers.concatenate([x, move_input])
 
     # Interaction layers
-    interaction_x = layers.Dense(256, activation="relu")(combined)
-    interaction_x = layers.Dense(128, activation="relu")(interaction_x)
-    interaction_x = layers.Dense(64, activation="relu")(interaction_x)
+    interaction_x = layers.Dense(
+        256,
+        activation="relu",
+        kernel_initializer=custom_weight_initializer,
+        bias_initializer=custom_bias_initializer,
+    )(combined)
+    interaction_x = layers.Dense(
+        128,
+        activation="relu",
+        kernel_initializer=custom_weight_initializer,
+        bias_initializer=custom_bias_initializer,
+    )(interaction_x)
+    interaction_x = layers.Dense(
+        64,
+        activation="relu",
+        kernel_initializer=custom_weight_initializer,
+        bias_initializer=custom_bias_initializer,
+    )(interaction_x)
 
     # Reward output
     reward_output = layers.Dense(
         1,
         activation="tanh",
         name="reward_output",
+        kernel_initializer=custom_weight_initializer,
+        bias_initializer=custom_bias_initializer,
     )(interaction_x)
 
     model = keras.Model(
