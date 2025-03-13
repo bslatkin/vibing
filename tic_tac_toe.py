@@ -420,6 +420,19 @@ def load_data(filename):
     return data
 
 
+def one_hot_to_board(board_state_one_hot):
+    board_state = np.zeros((3, 3), dtype=int)
+    for r in range(3):
+        for c in range(3):
+            if board_state_one_hot[r, c, 0] == 1:
+                board_state[r, c] = 0
+            elif board_state_one_hot[r, c, 1] == 1:
+                board_state[r, c] = 1
+            elif board_state_one_hot[r, c, 2] == 1:
+                board_state[r, c] = 2
+    return board_state
+
+
 def inspect_data(data):
     """Inspects the generated test data and prints out a random game."""
     if not data:
@@ -431,17 +444,7 @@ def inspect_data(data):
     print("-" * 20)
 
     # Convert one-hot to board state
-    board_state_one_hot = random_example.board_state_one_hot.reshape((3, 3, 3))
-    board_state = np.zeros((3, 3), dtype=int)
-    for r in range(3):
-        for c in range(3):
-            if board_state_one_hot[r, c, 0] == 1:
-                board_state[r, c] = 0
-            elif board_state_one_hot[r, c, 1] == 1:
-                board_state[r, c] = 1
-            elif board_state_one_hot[r, c, 2] == 1:
-                board_state[r, c] = 2
-
+    board_state = one_hot_to_board(random_example.board_state_one_hot)
     print("Board State (0=empty, 1=X, 2=O):")
     print(board_state)
     print("-" * 10)
