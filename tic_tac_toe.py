@@ -8,7 +8,7 @@ from typing import List
 import numpy as np, tensorflow as tf
 from sklearn.model_selection import train_test_split
 from tensorflow import keras
-from tensorflow.keras import layers
+from tensorflow.keras import layers, regularizers
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import Callback
 
@@ -255,36 +255,29 @@ def create_model():
     board_input = keras.Input(shape=(3, 3, 3), name="board_input")
     move_input = keras.Input(shape=(9,), name="move_input")
 
-    # Convolutional layers for board state
-    conv_x = layers.Conv2D(
-        32,
-        (2, 2),
-        activation="relu",
-        padding="same",
-    )(board_input)
-    conv_x = layers.MaxPooling2D((2, 2))(conv_x)
-    conv_x = layers.Conv2D(
-        64,
-        (2, 2),
-        activation="relu",
-        padding="same",
-    )(conv_x)
-    conv_x = layers.Flatten()(conv_x)
-
-    # Dense layers for board state
-    x = layers.Dense(256, activation="relu")(conv_x)
-    x = layers.Dense(256, activation="relu")(x)
+    x = layers.Flatten()(board_input)
     combined = layers.concatenate([x, move_input])
 
-    # Interaction layers
-    interaction_x = layers.Dense(128, activation="relu")(combined)
-    interaction_x = layers.Dense(128, activation="relu")(interaction_x)
-    interaction_x = layers.Dense(128, activation="relu")(interaction_x)
+    interaction_x = layers.Dense(
+        128,
+        activation="relu",
+        kernel_regularizer=regularizers.l2(0.001),
+    )(combined)
+    interaction_x = layers.Dense(
+        64,
+        activation="relu",
+        kernel_regularizer=regularizers.l2(0.001),
+    )(interaction_x)
+    interaction_x = layers.Dense(
+        64,
+        activation="relu",
+        kernel_regularizer=regularizers.l2(0.001),
+    )(interaction_x)
 
     # Reward output
     reward_output = layers.Dense(
         1,
-        activation="tanh",
+        activation="sigmoid",
         name="reward_output",
     )(interaction_x)
 
@@ -340,7 +333,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
         random_state=42,
     )
 
-    learning_rate = 0.0001  # Example: Lower than the default 0.001
+    learning_rate = 0.00005  # Example: Lower than the default 0.001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
