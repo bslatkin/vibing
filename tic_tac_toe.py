@@ -28,8 +28,8 @@ class TicTacToe:
         self.current_player = 1  # Player X starts
         self.parent_board = None
         self.child_boards = {}  # Map (row, col) of the play to the child board
-        self.win_probability_x = None
-        self.win_probability_o = None
+        self.win_probability_x = 0.0
+        self.win_probability_o = 0.0
 
     def is_valid_move(self, row, col):
         return 0 <= row < 3 and 0 <= col < 3 and self.board[row, col] == 0
@@ -138,15 +138,60 @@ def generate_all_games(game, counter):
     if winner != 0 or game.is_board_full():
         if winner == 1:
             assert game.current_player == 2
-            game.win_probability_x = 1.0
-            game.win_probability_o = 0
+
+            i = 1
+            current = game
+            while current:
+                current.win_probability_x = max(
+                    1.0 / i, current.win_probability_x
+                )
+                current = current.parent_board
+                i += 1
+
         elif winner == 2:
             assert game.current_player == 1
-            game.win_probability_x = 0
-            game.win_probability_o = 1.0
-        else:
-            game.win_probability_x = 0.5
-            game.win_probability_o = 0.5
+
+            i = 1
+            current = game
+            while current:
+                current.win_probability_o = max(
+                    1.0 / i, current.win_probability_o
+                )
+                current = current.parent_board
+                i += 1
+        elif game.current_player == 2:
+            # previous player was 1
+            i = 1
+            current = game
+            while current:
+                current.win_probability_x = max(
+                    0.5 / i, current.win_probability_x
+                )
+                current = current.parent_board
+                i += 1
+        elif game.current_player == 1:
+            # previous player was 2
+            i = 1
+            current = game
+            while current:
+                current.win_probability_o = max(
+                    0.5 / i, current.win_probability_o
+                )
+                current = current.parent_board
+                i += 1
+
+        # else:
+        #     i = 1
+        #     current = game
+        #     while current:
+        #         current.win_probability_x = max(
+        #             0.5 / i, current.win_probability_x
+        #         )
+        #         current.win_probability_o = max(
+        #             0.5 / i, current.win_probability_o
+        #         )
+        #         current = current.parent_board
+        #         i += 1
 
         counter[0] += 1
         if counter[0] and counter[0] % 100_000 == 0:
@@ -162,38 +207,9 @@ def generate_all_games(game, counter):
         new_game = game.make_move(row, col)
         generate_all_games(new_game, counter)
 
-    if game.win_probability_x is None and game.win_probability_o is None:
-        assert game.child_boards
-        win_x = 0
-        win_o = 0
-        count = 0
-
-        for child in game.child_boards.values():
-            if child.win_probability_x > 0.5:
-                win_x += 1
-                count += 1
-
-            if child.win_probability_o > 0.5:
-                win_o += 1
-                count += 1
-
-        if count:
-            game.win_probability_x = win_x * 1.0 / count
-            game.win_probability_o = win_o * 1.0 / count
-        else:
-            game.win_probability_x = 0.5
-            game.win_probability_o = 0.5
-    else:
-        assert game.check_winner() != 0 or game.is_board_full()
-
 
 def iterate_games(parent):
     for (row, col), child in parent.child_boards.items():
-        if not child.child_boards:
-            # Ignore training examples where there's only one more move,
-            # since the reward function will always be zero anyways.
-            continue
-
         yield row, col, child
         yield from iterate_games(child)
 
@@ -237,10 +253,6 @@ def generate_training_data():
     data = []
     for row, col, child in iterate_games(game):
         data.append(create_training_example(row, col, child))
-
-    print(
-        f"Final probabilities: x = {game.win_probability_x}, o = {game.win_probability_o}"
-    )
 
     print(f"Finished generating data. {counter[0]} examples")
     return data
@@ -320,7 +332,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
 
     model.compile(
         optimizer="adam",
-        loss={"reward_output": "binary_crossentropy"},
+        loss={"reward_output": "mse"},
         metrics={"reward_output": "mse"},
     )
 
