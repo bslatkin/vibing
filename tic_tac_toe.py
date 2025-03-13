@@ -249,16 +249,16 @@ def create_training_examples(game):
         move_one_hot[row * 3 + col] = 1
 
         if parent.current_player == 1:
-            reward = game.win_probability_x
+            reward = current.win_probability_x
         else:
-            reward = game.win_probability_o
+            reward = current.win_probability_o
 
         example = TrainingExample(
-            board_state_one_hot=game.parent_board.one_hot_board(),
+            board_state_one_hot=parent.one_hot_board(),
             move_one_hot=move_one_hot,
             reward=reward,
-            win_x=game.win_probability_x,
-            win_o=game.win_probability_o,
+            win_x=current.win_probability_x,
+            win_o=current.win_probability_o,
             row=row,
             col=col,
             last_player=0.0 if parent.current_player == 1 else 1.0,
@@ -314,14 +314,15 @@ def create_transformer_model(
 
     # Positional encoding (simplified example)
     positions = np.arange(0, sequence_length)
-    positional_encodings = np.sin(
-        positions[:, np.newaxis]
-        / np.power(10000, np.arange(0, embedding_dim, 2) / embedding_dim)
-    )
-    positional_encodings[:, 1::2] = np.cos(
-        positions[:, np.newaxis]
-        / np.power(10000, np.arange(0, embedding_dim, 2) / embedding_dim)
-    )
+    positional_encodings = np.zeros((sequence_length, embedding_dim))
+
+    for pos in range(sequence_length):
+        for i in range(0, embedding_dim, 2):
+            denominator = np.power(10000, i / embedding_dim)
+            positional_encodings[pos, i] = np.sin(pos / denominator)
+            if i + 1 < embedding_dim:
+                positional_encodings[pos, i + 1] = np.cos(pos / denominator)
+
     positional_encodings = tf.constant(positional_encodings, dtype=tf.float32)
     x = x + positional_encodings
 
@@ -410,9 +411,9 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
             for sequence in data
         ]
     )
-    y_move = np.array([sequence[-1] for sequence in y_move])
-
-    y_reward = np.array([example.reward for example in data])
+    y_reward = np.array(
+        [example.reward for sequence in data for example in sequence.examples]
+    )
 
     (
         X_board_train,
@@ -445,6 +446,18 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     test_accuracy_callback = TestAccuracyCallback(
         X_board_test, y_reward_test, y_move_test, sequence_length=9
     )
+
+    # Reshape y_move_train and y_move_test to be flat
+    y_move_train = y_move_train.reshape(-1, 9)
+    y_move_test = y_move_test.reshape(-1, 9)
+
+    # Repeat y_reward_train and y_reward_test to match the number of moves
+    y_reward_train = np.repeat(y_reward_train, 9)
+    y_reward_test = np.repeat(y_reward_test, 9)
+
+    # Reshape X_board_train and X_board_test to be flat
+    X_board_train = X_board_train.reshape(-1, 3, 3, 3)
+    X_board_test = X_board_test.reshape(-1, 3, 3, 3)
 
     model.fit(
         {"board_input": X_board_train},
@@ -568,52 +581,38 @@ def one_hot_to_board(board_state_one_hot):
     return board_state
 
 
-def inspect_data(data):
-    """Inspects the generated test data and prints out a set of moves with the same parent."""
+def inspect_data(data: list[TrainingSequence]):
+    """Inspects the generated test data and prints out a sequence of moves."""
     if not data:
         print("No data to inspect.")
         return
 
-    # Select a random example
+    # Select a random sequence
     selected_example_index = random.randint(0, len(data) - 1)
-    selected_example = data[selected_example_index]
+    selected_sequence = data[selected_example_index]
 
-    # Find all examples with the same parent board
-    sibling_examples = []
-    for example in data:
-        if np.array_equal(
-            example.board_state_one_hot,
-            selected_example.board_state_one_hot,
-        ):
-            sibling_examples.append(example)
+    print(f"Inspecting sequence {selected_example_index}:")
 
-    print(
-        f"Inspecting examples with the same parent board as example {selected_example_index}:"
-    )
+    for i, example in enumerate(selected_sequence.examples):
+        if example.row == -1:
+            continue
 
-    # Print the parent board state
-    print("\nParent Board State (0=empty, 1=X, 2=O):")
-    parent_board_state = one_hot_to_board(selected_example.board_state_one_hot)
-    print(parent_board_state)
-    print("-" * 20)
+        print(f"\nExample {i+1} in sequence:")
+        print("-" * 20)
 
-    # Print details for each sibling example
-    for i, example in enumerate(sibling_examples):
-        print(f"\nSibling Example {i+1}:")
-        print("-" * 10)
+        # Print the board state
+        print("  Board State (0=empty, 1=X, 2=O):")
+        board_state = one_hot_to_board(example.board_state_one_hot)
+        print(board_state)
 
-        # Print the move and reward
-        print(f"  Player: {example.last_player}")
-        print(f"  Move:   ({example.row}, {example.col})")
-        print(f"  Win probability X: {example.win_x}")
-        print(f"  Win probability O: {example.win_o}")
-        print(f"  Reward: {example.reward}")
+        # Print the move details
+        if example.row != -1:
+            print(f"  Player: {'O' if example.last_player == 1 else 'X'}")
+            print(f"  Move:   ({example.row}, {example.col})")
+            print(f"  Win probability X: {example.win_x}")
+            print(f"  Win probability O: {example.win_o}")
+            print(f"  Reward: {example.reward}")
 
-        # Print the child board state
-        child_board_state = parent_board_state.copy()
-        child_board_state[example.row, example.col] = example.last_player
-        print("  Child Board State:")
-        print(child_board_state)
         print("-" * 20)
 
 
