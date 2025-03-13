@@ -154,8 +154,8 @@ def generate_all_games(game, counter):
             game.win_probability_x = 0.0
             game.win_probability_o = 1.0
         else:
-            game.win_probability_x = 0.5
-            game.win_probability_o = 0.5
+            game.win_probability_x = 0.0
+            game.win_probability_o = 0.0
 
         counter[0] += 1
         if counter[0] and counter[0] % 100_000 == 0:
@@ -176,12 +176,14 @@ def generate_all_games(game, counter):
 
     if any_winners:
         # If any of the children are winners, then count all of the
-        # non-winning children as examples that will lose, to further
-        # emphasize that they shouldn't be chosen.
+        # non-winning siblings as examples that will lose, to further
+        # emphasize that they shouldn't be chosen. Also, remove those
+        # losing sibling's children from the training set entirely.
         for child in game.child_boards.values():
             if child.check_winner() == 0:
                 child.win_probability_x = 0.0
                 child.win_probability_o = 0.0
+                child.child_boards.clear()
 
     if game.win_probability_x is None:
         game.win_probability_x = max(
@@ -365,7 +367,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
             "reward_output": "binary_crossentropy",
             "move_output": "categorical_crossentropy",
         },
-        loss_weights={"reward_output": 0.5, "move_output": 1.0},
+        loss_weights={"reward_output": 0.5, "move_output": 0.5},
         metrics={"reward_output": "mse", "move_output": "accuracy"},
     )
 
