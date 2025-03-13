@@ -164,10 +164,12 @@ def generate_all_games(game, counter):
 
     if game.win_probability_x is None and game.win_probability_o is None:
         game.win_probability_x = sum(
-            child.win_probability_x for child in new_game.child_boards.values()
+            child.win_probability_x for child in game.child_boards.values()
         ) / len(game.child_boards)
 
-        game.win_probability_o = 1 - new_game.win_probability_x
+        game.win_probability_o = sum(
+            child.win_probability_o for child in game.child_boards.values()
+        ) / len(game.child_boards)
     else:
         assert game.check_winner() != 0 or game.is_board_full()
 
@@ -200,7 +202,7 @@ def create_training_example(row, col, game):
     return TrainingExample(
         board_state_one_hot=game.parent_board.one_hot_board(),
         move_one_hot=move_one_hot,
-        reward=reward,
+        reward=max(min(1, reward), -1) / 2,
         row=row,
         col=col,
         last_player=last_player,
@@ -221,28 +223,37 @@ def generate_training_data():
     for row, col, child in iterate_games(game):
         data.append(create_training_example(row, col, child))
 
+    print(
+        f"Final probabilities: x = {game.win_probability_x}, y = {game.win_probability_o}"
+    )
+
     print(f"Finished generating data. {counter[0]} examples")
     return data
 
 
 def create_model():
-    """Creates a simple neural network model for Tic-Tac-Toe."""
+    """Creates a simple MLP model for Tic-Tac-Toe."""
     board_input = keras.Input(shape=(3, 3, 3), name="board_input")
-    # Use Conv2D to take advantage of spatial relationships
-    x = layers.Conv2D(128, (3, 3), activation="relu", padding="same")(
-        board_input
-    )
-    x = layers.Flatten()(x)  # Flatten after convolution
+    move_input = keras.Input(shape=(9,), name="move_input")
+
+    x = layers.Flatten()(board_input)
     x = layers.Dense(128, activation="relu")(x)
     x = layers.Dense(64, activation="relu")(x)
-    x = layers.Dense(64, activation="relu")(x)
-    x = layers.Dense(32, activation="relu")(x)
 
-    move_output = layers.Dense(9, activation="sigmoid", name="move_output")(x)
-    reward_output = layers.Dense(1, activation="tanh", name="reward_output")(x)
+    # Move processing
+    move_x = layers.Dense(64, activation="relu")(move_input)
+    move_x = layers.Dense(32, activation="relu")(move_x)
+
+    # Concatenate board features and move features
+    combined = layers.concatenate([x, move_x])
+
+    # Reward output
+    reward_output = layers.Dense(1, activation="tanh", name="reward_output")(
+        combined
+    )
 
     model = keras.Model(
-        inputs=board_input, outputs=[move_output, reward_output]
+        inputs=[board_input, move_input], outputs=[reward_output]
     )
 
     return model
@@ -254,67 +265,53 @@ def one_hot_to_move(move_index):
 
 
 class TestAccuracyCallback(Callback):
-    def __init__(self, X_test, y_move_test, y_reward_test):
+    def __init__(self, X_test, X_move_test, y_reward_test):
         super().__init__()
         self.X_test = X_test
-        self.y_move_test = y_move_test
+        self.X_move_test = X_move_test
         self.y_reward_test = y_reward_test
 
     def on_epoch_end(self, epoch, logs=None):
-        loss, move_loss, reward_loss, move_accuracy, reward_mse = (
-            self.model.evaluate(
-                self.X_test,
-                {
-                    "move_output": self.y_move_test,
-                    "reward_output": self.y_reward_test,
-                },
-                verbose=0,
-            )
+        loss, reward_loss = self.model.evaluate(
+            [self.X_test, self.X_move_test],
+            self.y_reward_test,
+            verbose=0,
         )
 
         print()
-        print(
-            f"Epoch {epoch+1}: Move Accuracy: {move_accuracy:.4f}, Reward Loss: {reward_loss:.4f}"
-        )
+        print(f"Epoch {epoch+1}: Reward Loss: {reward_loss:.4f}")
         print()
 
 
 def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
-    X = np.array([example.board_state_one_hot for example in data])
-    y_move = np.array([example.move_one_hot for example in data])
+    X_board = np.array([example.board_state_one_hot for example in data])
+    X_move = np.array([example.move_one_hot for example in data])
     y_reward = np.array([example.reward for example in data])
 
     (
-        X_train,
-        X_test,
-        y_move_train,
-        y_move_test,
+        X_board_train,
+        X_board_test,
+        X_move_train,
+        X_move_test,
         y_reward_train,
         y_reward_test,
     ) = train_test_split(
-        X, y_move, y_reward, test_size=test_size, random_state=42
+        X_board, X_move, y_reward, test_size=test_size, random_state=42
     )
 
     model.compile(
         optimizer="adam",
-        loss={
-            "move_output": "categorical_crossentropy",
-            "reward_output": "mse",
-        },
-        loss_weights={"move_output": 0.2, "reward_output": 0.8},
-        metrics={"move_output": "accuracy", "reward_output": "mse"},
+        loss={"reward_output": "mse"},
+        metrics={"reward_output": "mse"},
     )
 
     test_accuracy_callback = TestAccuracyCallback(
-        X_test, y_move_test, y_reward_test
+        X_board_test, X_move_test, y_reward_test
     )
 
     model.fit(
-        X_train,
-        {
-            "move_output": y_move_train,
-            "reward_output": y_reward_train,
-        },  # Changed here
+        [X_board_train, X_move_train],
+        y_reward_train,  # Changed here
         epochs=epochs,
         batch_size=batch_size,
         callbacks=[test_accuracy_callback],
@@ -326,12 +323,13 @@ def predict_next_move(model, game):
     """Predicts the next move based on the current board state."""
     one_hot_board = game.one_hot_board()
     # Add a batch dimension to the input
-    one_hot_board = np.expand_dims(
-        one_hot_board, axis=0
-    )  # Add batch dimension
-    predictions = model.predict(one_hot_board, verbose=0)
-    move_probabilities = predictions[0][0]  # Extract the move probabilities
-
+    one_hot_board = np.expand_dims(one_hot_board, axis=0)
+    move_probabilities = np.zeros((9,))
+    for i in range(9):
+        move_one_hot = np.zeros((1, 9))
+        move_one_hot[0, i] = 1
+        predictions = model.predict([one_hot_board, move_one_hot], verbose=0)
+        move_probabilities[i] = predictions[0][0]
     # Mask out invalid moves
     for i in range(9):
         row, col = one_hot_to_move(i)
