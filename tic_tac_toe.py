@@ -182,14 +182,14 @@ def generate_all_games(game, counter):
                 break
 
     if game.win_probability_x is None:
-        game.win_probability_x = sum(
+        game.win_probability_x = max(
             child.win_probability_x for child in game.child_boards.values()
-        ) / len(game.child_boards)
+        )
 
     if game.win_probability_o is None:
-        game.win_probability_o = sum(
+        game.win_probability_o = max(
             child.win_probability_o for child in game.child_boards.values()
-        ) / len(game.child_boards)
+        )
 
 
 def iterate_games(parent):
@@ -208,9 +208,9 @@ def create_training_example(row, col, game):
     last_player = 3 - game.current_player
 
     if last_player == 1:
-        reward = game.win_probability_x
+        reward = game.win_probability_x - game.win_probability_o
     elif last_player == 2:
-        reward = game.win_probability_o
+        reward = game.win_probability_o - game.win_probability_x
     else:
         assert False
 
@@ -248,21 +248,17 @@ def create_model():
     move_input = keras.Input(shape=(9,), name="move_input")
 
     x = layers.Flatten()(board_input)
-    x = layers.Dense(128, activation="relu")(x)
-    x = layers.Dense(64, activation="relu")(x)
-    x = layers.Dense(32, activation="relu")(x)
-
     combined = layers.concatenate([x, move_input])
 
     # Interaction layers
-    interaction_x = layers.Dense(128, activation="relu")(combined)
+    interaction_x = layers.Dense(256, activation="relu")(combined)
+    interaction_x = layers.Dense(128, activation="relu")(interaction_x)
     interaction_x = layers.Dense(64, activation="relu")(interaction_x)
-    interaction_x = layers.Dense(32, activation="relu")(interaction_x)
 
     # Reward output
     reward_output = layers.Dense(
         1,
-        activation="sigmoid",
+        activation="tanh",
         name="reward_output",
     )(interaction_x)
 
@@ -320,7 +316,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
 
     model.compile(
         optimizer="adam",
-        loss={"reward_output": "binary_crossentropy"},
+        loss={"reward_output": "mse"},
         metrics={"reward_output": "mse"},
     )
 
