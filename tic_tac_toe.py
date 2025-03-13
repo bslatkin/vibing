@@ -146,14 +146,16 @@ def generate_all_games(game, counter):
     winner = game.check_winner()
     if winner != 0 or game.is_board_full():
         if winner == 1:
+            assert game.current_player == 2
             game.win_probability_x = 1.0
             game.win_probability_o = 0.0
         elif winner == 2:
+            assert game.current_player == 1
             game.win_probability_x = 0.0
             game.win_probability_o = 1.0
         else:
-            game.win_probability_x = 0.0
-            game.win_probability_o = 0.0
+            game.win_probability_x = 0.5
+            game.win_probability_o = 0.5
 
         counter[0] += 1
         if counter[0] and counter[0] % 100_000 == 0:
@@ -165,42 +167,9 @@ def generate_all_games(game, counter):
         (r, c) for r in range(3) for c in range(3) if game.board[r, c] == 0
     ]
 
-    any_winners = False
-
     for row, col in empty_cells:
         new_game = game.make_move(row, col)
         generate_all_games(new_game, counter)
-        if new_game.check_winner() != 0:
-            any_winners = True
-
-    if any_winners:
-        # If any descendents of this game are winners, that means this move
-        # was bad and enabled the opposing player to win. So clear the child
-        # boards and set the current game's win probability to zero.
-        for child in game.child_boards.values():
-            winner = child.check_winner()
-            if winner == game.current_player:
-                if game.current_player == 1:
-                    game.win_probability_x = 1.0
-                    game.win_probability_o = 0.0
-                elif game.current_player == 2:
-                    game.win_probability_x = 0
-                    game.win_probability_o = 1.0
-
-                game.child_boards.clear()
-                break
-    else:
-        # If any descendents of this game are losers for the opponent with win
-        # probability zero, then mark this game as a winner for the current player.
-        for child in game.child_boards.values():
-            if child.current_player == 1 and child.win_probability_x == 0.0:
-                game.win_probability_x = 0.0
-                game.win_probability_o = 1.0
-                break
-            elif child.current_player == 2 and child.win_probability_o == 0.0:
-                game.win_probability_x = 1.0
-                game.win_probability_o = 0.0
-                break
 
     if game.win_probability_x is None:
         game.win_probability_x = max(
@@ -227,7 +196,13 @@ def create_training_example(row, col, game):
     # The current player is who is playing next, but we want
     # who played last time.
     last_player = 3 - game.current_player
-    reward = max(game.win_probability_x, game.win_probability_o)
+
+    if game.win_probability_x and game.win_probability_o:
+        reward = max(game.win_probability_x, game.win_probability_o)
+    elif last_player == 1:
+        reward = game.win_probability_x
+    else:
+        reward = game.win_probability_o
 
     return TrainingExample(
         board_state_one_hot=game.parent_board.one_hot_board(),
@@ -260,13 +235,28 @@ def generate_training_data():
 
 
 def create_model():
-    """Creates a simple MLP model for Tic-Tac-Toe with custom initialization."""
+    """Creates a CNN model for Tic-Tac-Toe with custom initialization."""
     board_input = keras.Input(shape=(3, 3, 3), name="board_input")
     move_input = keras.Input(shape=(9,), name="move_input")
 
-    x = layers.Flatten()(board_input)
-    x = layers.Dense(256, activation="relu")(x)
-    x = layers.Dense(256, activation="relu")(x)
+    # Convolutional layers for board state
+    conv_x = layers.Conv2D(
+        32,
+        (2, 2),
+        activation="relu",
+        padding="same",
+    )(board_input)
+    conv_x = layers.MaxPooling2D((2, 2))(conv_x)
+    conv_x = layers.Conv2D(
+        64,
+        (2, 2),
+        activation="relu",
+        padding="same",
+    )(conv_x)
+    conv_x = layers.Flatten()(conv_x)
+
+    # Dense layers for board state
+    x = layers.Dense(256, activation="relu")(conv_x)
     x = layers.Dense(256, activation="relu")(x)
     combined = layers.concatenate([x, move_input])
 
