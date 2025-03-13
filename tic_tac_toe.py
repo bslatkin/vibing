@@ -139,14 +139,14 @@ def generate_all_games(game, counter):
         if winner == 1:
             assert game.current_player == 2
             game.win_probability_x = 1.0
-            game.win_probability_o = 0.0
+            game.win_probability_o = -1.0
         elif winner == 2:
             assert game.current_player == 1
-            game.win_probability_x = 0.0
+            game.win_probability_x = -1.0
             game.win_probability_o = 1.0
         else:
-            game.win_probability_x = 0.5
-            game.win_probability_o = 0.5
+            game.win_probability_x = 0
+            game.win_probability_o = 0
 
         counter[0] += 1
         if counter[0] and counter[0] % 100_000 == 0:
@@ -176,6 +176,11 @@ def generate_all_games(game, counter):
 
 def iterate_games(parent):
     for (row, col), child in parent.child_boards.items():
+        if not child.child_boards:
+            # Ignore training examples where there's only one more move,
+            # since the reward function will always be zero anyways.
+            continue
+
         yield row, col, child
         yield from iterate_games(child)
 
@@ -193,16 +198,16 @@ def create_training_example(row, col, game):
     change_o = game.win_probability_o - game.parent_board.win_probability_o
 
     if last_player == 1:
-        reward = game.win_probability_x - change_o
+        reward = game.win_probability_x + change_x - change_o
     elif last_player == 2:
-        reward = game.win_probability_o - change_x
+        reward = game.win_probability_o + change_o - change_x
     else:
         assert False
 
     return TrainingExample(
         board_state_one_hot=game.parent_board.one_hot_board(),
         move_one_hot=move_one_hot,
-        reward=max(min(1, reward), -1) / 2,
+        reward=reward / 2,
         row=row,
         col=col,
         last_player=last_player,
