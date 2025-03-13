@@ -167,17 +167,29 @@ def generate_all_games(game, counter):
         (r, c) for r in range(3) for c in range(3) if game.board[r, c] == 0
     ]
 
+    any_winners = False
     for row, col in empty_cells:
         new_game = game.make_move(row, col)
         generate_all_games(new_game, counter)
+        if new_game.check_winner() != 0:
+            any_winners = True
+
+    if any_winners:
+        # If any of the children are winners, then count all of the
+        # non-winning children as examples that will lose, to further
+        # emphasize that they shouldn't be chosen.
+        for child in game.child_boards.values():
+            if child.check_winner() == 0:
+                child.win_probability_x = 0.0
+                child.win_probability_o = 0.0
 
     if game.win_probability_x is None:
-        game.win_probability_x = probability_mean(
+        game.win_probability_x = max(
             child.win_probability_x for child in game.child_boards.values()
         )
 
     if game.win_probability_o is None:
-        game.win_probability_o = probability_mean(
+        game.win_probability_o = max(
             child.win_probability_o for child in game.child_boards.values()
         )
 
@@ -198,9 +210,9 @@ def create_training_example(row, col, game):
     last_player = 3 - game.current_player
 
     if last_player == 1:
-        reward = game.win_probability_x - game.win_probability_o
+        reward = game.win_probability_x
     else:
-        reward = game.win_probability_o - game.win_probability_x
+        reward = game.win_probability_o
 
     return TrainingExample(
         board_state_one_hot=game.parent_board.one_hot_board(),
