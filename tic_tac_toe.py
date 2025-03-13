@@ -152,8 +152,8 @@ def generate_all_games(game, counter):
             game.win_probability_x = 0.0
             game.win_probability_o = 1.0
         else:
-            game.win_probability_x = 0.5
-            game.win_probability_o = 0.5
+            game.win_probability_x = 0.0
+            game.win_probability_o = 0.0
 
         counter[0] += 1
         if counter[0] and counter[0] % 100_000 == 0:
@@ -189,14 +189,26 @@ def generate_all_games(game, counter):
 
                 game.child_boards.clear()
                 break
+    else:
+        # If any descendents of this game are losers for the opponent with win
+        # probability zero, then mark this game as a winner for the current player.
+        for child in game.child_boards.values():
+            if child.current_player == 1 and child.win_probability_x == 0.0:
+                game.win_probability_x = 0.0
+                game.win_probability_o = 1.0
+                break
+            elif child.current_player == 2 and child.win_probability_o == 0.0:
+                game.win_probability_x = 1.0
+                game.win_probability_o = 0.0
+                break
 
     if game.win_probability_x is None:
-        game.win_probability_x = probability_mean(
+        game.win_probability_x = max(
             child.win_probability_x for child in game.child_boards.values()
         )
 
     if game.win_probability_o is None:
-        game.win_probability_o = probability_mean(
+        game.win_probability_o = max(
             child.win_probability_o for child in game.child_boards.values()
         )
 
@@ -215,13 +227,7 @@ def create_training_example(row, col, game):
     # The current player is who is playing next, but we want
     # who played last time.
     last_player = 3 - game.current_player
-
-    if last_player == 1:
-        reward = game.win_probability_x - game.win_probability_o
-    elif last_player == 2:
-        reward = game.win_probability_o - game.win_probability_x
-    else:
-        assert False
+    reward = max(game.win_probability_x, game.win_probability_o)
 
     return TrainingExample(
         board_state_one_hot=game.parent_board.one_hot_board(),
@@ -272,7 +278,7 @@ def create_model():
     # Reward output
     reward_output = layers.Dense(
         1,
-        activation="tanh",
+        activation="sigmoid",
         name="reward_output",
     )(interaction_x)
 
@@ -333,7 +339,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
 
     model.compile(
         optimizer=optimizer,
-        loss={"reward_output": "mse"},
+        loss={"reward_output": "binary_crossentropy"},
         metrics={"reward_output": "mse"},
     )
 
