@@ -433,27 +433,36 @@ def one_hot_to_board(board_state_one_hot):
     return board_state
 
 
-def inspect_data(data):
-    """Inspects the generated test data and prints out a random game."""
+def inspect_data(data, num_examples=10):
+    """Inspects the generated test data and prints out a set of games around a random index."""
     if not data:
         print("No data to inspect.")
         return
 
-    random_example = random.choice(data)
-    print("Random Game Inspection:")
-    print("-" * 20)
+    random_index = random.randint(0, len(data) - 1)
+    start_index = max(0, random_index - num_examples)
+    end_index = min(len(data), random_index + num_examples + 1)
 
-    # Convert one-hot to board state
-    board_state = one_hot_to_board(random_example.board_state_one_hot)
-    print("Board State (0=empty, 1=X, 2=O):")
-    print(board_state)
-    print("-" * 10)
+    print(
+        f"Inspecting examples around index {random_index} (from {start_index} to {end_index}):"
+    )
 
-    # Print the move and reward
-    print(f"Player: {random_example.last_player}")
-    print(f"Move:   ({random_example.row}, {random_example.col})")
-    print(f"Reward: {random_example.reward}")
-    print("-" * 20)
+    for i in range(start_index, end_index):
+        example = data[i]
+        print(f"\nExample {i}:")
+        print("-" * 20)
+
+        # Convert one-hot to board state
+        board_state = one_hot_to_board(example.board_state_one_hot)
+        print("Board State (0=empty, 1=X, 2=O):")
+        print(board_state)
+        print("-" * 10)
+
+        # Print the move and reward
+        print(f"Player: {example.last_player}")
+        print(f"Move:   ({example.row}, {example.col})")
+        print(f"Reward: {example.reward}")
+        print("-" * 20)
 
 
 def save_model(model, filename):
