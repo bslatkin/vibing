@@ -139,14 +139,14 @@ def generate_all_games(game, counter):
         if winner == 1:
             assert game.current_player == 2
             game.win_probability_x = 1.0
-            game.win_probability_o = -1.0
+            game.win_probability_o = 0
         elif winner == 2:
             assert game.current_player == 1
-            game.win_probability_x = -1.0
+            game.win_probability_x = 0
             game.win_probability_o = 1.0
         else:
-            game.win_probability_x = 0
-            game.win_probability_o = 0
+            game.win_probability_x = 0.5
+            game.win_probability_o = 0.5
 
         counter[0] += 1
         if counter[0] and counter[0] % 100_000 == 0:
@@ -163,13 +163,26 @@ def generate_all_games(game, counter):
         generate_all_games(new_game, counter)
 
     if game.win_probability_x is None and game.win_probability_o is None:
-        game.win_probability_x = sum(
-            child.win_probability_x for child in game.child_boards.values()
-        ) / len(game.child_boards)
+        assert game.child_boards
+        win_x = 0
+        win_o = 0
+        count = 0
 
-        game.win_probability_o = sum(
-            child.win_probability_o for child in game.child_boards.values()
-        ) / len(game.child_boards)
+        for child in game.child_boards.values():
+            if child.win_probability_x > 0.5:
+                win_x += 1
+                count += 1
+
+            if child.win_probability_o > 0.5:
+                win_o += 1
+                count += 1
+
+        if count:
+            game.win_probability_x = win_x * 1.0 / count
+            game.win_probability_o = win_o * 1.0 / count
+        else:
+            game.win_probability_x = 0.5
+            game.win_probability_o = 0.5
     else:
         assert game.check_winner() != 0 or game.is_board_full()
 
@@ -226,7 +239,7 @@ def generate_training_data():
         data.append(create_training_example(row, col, child))
 
     print(
-        f"Final probabilities: x = {game.win_probability_x}, y = {game.win_probability_o}"
+        f"Final probabilities: x = {game.win_probability_x}, o = {game.win_probability_o}"
     )
 
     print(f"Finished generating data. {counter[0]} examples")
@@ -239,23 +252,23 @@ def create_model():
     move_input = keras.Input(shape=(9,), name="move_input")
 
     x = layers.Flatten()(board_input)
-    x = layers.Dense(128, activation="relu")(x)
-    x = layers.Dense(64, activation="relu")(x)
+    combined = layers.concatenate([x, move_input])
 
-    # Move processing
-    move_x = layers.Dense(64, activation="relu")(move_input)
-    move_x = layers.Dense(32, activation="relu")(move_x)
-
-    # Concatenate board features and move features
-    combined = layers.concatenate([x, move_x])
+    # Interaction layers
+    interaction_x = layers.Dense(256, activation="relu")(combined)
+    interaction_x = layers.Dense(128, activation="relu")(interaction_x)
+    interaction_x = layers.Dense(64, activation="relu")(interaction_x)
 
     # Reward output
-    reward_output = layers.Dense(1, activation="tanh", name="reward_output")(
-        combined
-    )
+    reward_output = layers.Dense(
+        1,
+        activation="sigmoid",
+        name="reward_output",
+    )(interaction_x)
 
     model = keras.Model(
-        inputs=[board_input, move_input], outputs=[reward_output]
+        inputs=[board_input, move_input],
+        outputs=[reward_output],
     )
 
     return model
@@ -298,22 +311,28 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
         y_reward_train,
         y_reward_test,
     ) = train_test_split(
-        X_board, X_move, y_reward, test_size=test_size, random_state=42
+        X_board,
+        X_move,
+        y_reward,
+        test_size=test_size,
+        random_state=42,
     )
 
     model.compile(
         optimizer="adam",
-        loss={"reward_output": "mse"},
+        loss={"reward_output": "binary_crossentropy"},
         metrics={"reward_output": "mse"},
     )
 
     test_accuracy_callback = TestAccuracyCallback(
-        X_board_test, X_move_test, y_reward_test
+        X_board_test,
+        X_move_test,
+        y_reward_test,
     )
 
     model.fit(
         [X_board_train, X_move_train],
-        y_reward_train,  # Changed here
+        y_reward_train,
         epochs=epochs,
         batch_size=batch_size,
         callbacks=[test_accuracy_callback],
