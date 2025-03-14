@@ -37,6 +37,7 @@ class TicTacToe:
         self.child_boards = {}  # Map (row, col) of the play to the child board
         self.win_probability_x = None
         self.win_probability_o = None
+        self.skip = False
 
     def is_valid_move(self, row, col):
         return 0 <= row < 3 and 0 <= col < 3 and self.board[row, col] == 0
@@ -57,46 +58,6 @@ class TicTacToe:
             child.current_player = 1
 
         return child
-
-    def get_max_squares(self, row, col, player):
-        """
-        Returns the maximum number of squares a player has filled in
-        relative to a given position.
-        """
-        max_present = 0
-
-        # Check row
-        row_present = 0
-        for c in range(3):
-            if self.board[row, c] == player:
-                row_present += 1
-
-        # Check column
-        col_present = 0
-        for r in range(3):
-            if self.board[r, col] == player:
-                col_present += 1
-
-        # Check diagonal (top-left to bottom-right)
-        diag_present = 0
-        if row == col:
-            for i in range(3):
-                if self.board[i, i] == player:
-                    diag_present += 1
-
-        # Check diagonal (top-right to bottom-left)
-        diag_right_present = 0
-        if row + col == 2:
-            for i in range(3):
-                if self.board[i, 2 - i] == player:
-                    diag_right_present += 1
-
-        return (
-            row_present,
-            col_present,
-            diag_present,
-            diag_right_present,
-        )
 
     def check_winner(self):
         # Check rows
@@ -146,6 +107,12 @@ def probability_mean(values_iter):
     return total / len(values)
 
 
+def skip_children(game):
+    for child in game.child_boards.values():
+        child.skip = True
+        skip_children(child)
+
+
 def generate_all_games(game, all_games):
     winner = game.check_winner()
     if winner != 0 or game.is_board_full():
@@ -160,9 +127,20 @@ def generate_all_games(game, all_games):
         (r, c) for r in range(3) for c in range(3) if game.board[r, c] == 0
     ]
 
+    any_winner = False
+
     for row, col in empty_cells:
         new_game = game.make_move(row, col)
         generate_all_games(new_game, all_games)
+        if new_game.check_winner() != 0:
+            any_winner = True
+
+    if any_winner:
+        # If there's any winner on this turn, then remove the other examples
+        # because that's not how the model should ever play.
+        for child in game.child_boards.values():
+            if child.check_winner() == 0:
+                skip_children(child)
 
 
 def pad_examples(examples):
@@ -216,9 +194,18 @@ def create_training_examples(game):
 
     pad_examples(result)
 
+    winner = game.check_winner()
+
+    if winner == 1:
+        reward = 1.0
+    elif winner == 2:
+        reward = 0.0
+    else:
+        reward = 0.5
+
     return TrainingSequence(
         examples=result,
-        reward=1.0 if game.check_winner() == 1 else 0.0,
+        reward=reward,
     )
 
 
@@ -235,9 +222,13 @@ def generate_training_data():
 
     data = []
     for game in all_games:
+        if game.skip:
+            continue
+
+        data.append(create_training_examples(game))
+
         if data and len(data) % 100_000 == 0:
             print(f"Generated {len(data)} examples")
-        data.append(create_training_examples(game))
 
     print(f"Finished generating examples. {len(data)} examples")
 
