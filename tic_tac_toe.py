@@ -232,49 +232,56 @@ def create_transformer_model(
     ff_dim=32,
     num_transformer_blocks=2,
 ):
-    # Input: Sequence of board states
     board_input = keras.Input(
-        shape=(sequence_length, 3, 3, 3), name="board_input"
+        shape=(sequence_length, 3, 3, 3),
+        name="board_input",
     )
-    player_input = keras.Input(shape=(sequence_length, 1), name="player_input")
+    player_input = keras.Input(
+        shape=(sequence_length, 1),
+        name="player_input",
+    )
 
-    # Flatten the board states
-    x = layers.Reshape((sequence_length, 27))(board_input)
+    board_x = layers.Reshape((sequence_length, 27))(board_input)
+    board_x = layers.Dense(embedding_dim, activation="relu")(board_x)
 
-    # Concatenate board and player inputs
-    x = layers.Concatenate(axis=-1)([x, player_input])
+    player_x = layers.Dense(embedding_dim, activation="relu")(player_input)
 
-    # Embedding layer
-    x = layers.Dense(embedding_dim, activation="relu")(x)
+    x = layers.Concatenate(axis=-1)([board_x, player_x])
+    combined_dim = 2 * embedding_dim
 
     # Positional encoding
-    positional_encodings = np.zeros((sequence_length, embedding_dim))
+    positional_encodings = np.zeros((sequence_length, combined_dim))
     for pos in range(sequence_length):
-        for i in range(0, embedding_dim, 2):
-            denominator = np.power(10000, i / embedding_dim)
+        for i in range(0, combined_dim, 2):
+            denominator = np.power(10000, i / combined_dim)
             positional_encodings[pos, i] = np.sin(pos / denominator)
-            if i + 1 < embedding_dim:
+            if i + 1 < combined_dim:
                 positional_encodings[pos, i + 1] = np.cos(pos / denominator)
 
     positional_encodings = tf.constant(positional_encodings, dtype=tf.float32)
+    positional_encodings = tf.expand_dims(positional_encodings, axis=0)
     x = x + positional_encodings
 
     # Transformer blocks
     for _ in range(num_transformer_blocks):
-        x = transformer_encoder(x, embedding_dim, num_heads, ff_dim)
+        x = transformer_encoder(x, combined_dim, num_heads, ff_dim)
 
     # Reward branch for X
     reward_x_branch = layers.GlobalAveragePooling1D()(x)
     reward_x_branch = layers.Dense(128, activation="relu")(reward_x_branch)
     reward_x_output = layers.Dense(
-        1, activation="sigmoid", name="reward_x_output"
+        1,
+        activation="sigmoid",
+        name="reward_x_output",
     )(reward_x_branch)
 
     # Reward branch for O
     reward_o_branch = layers.GlobalAveragePooling1D()(x)
     reward_o_branch = layers.Dense(128, activation="relu")(reward_o_branch)
     reward_o_output = layers.Dense(
-        1, activation="sigmoid", name="reward_o_output"
+        1,
+        activation="sigmoid",
+        name="reward_o_output",
     )(reward_o_branch)
 
     # Move branch
@@ -318,19 +325,20 @@ def one_hot_to_move(move_index):
 class TestAccuracyCallback(Callback):
     def __init__(
         self,
-        X_test,
+        X_board_input_test,
+        X_player_input_test,
         y_reward_x_test,
         y_reward_o_test,
         y_move_test,
         sequence_length,
     ):
         super().__init__()
-        self.X_test = X_test
+        self.X_board_input_test = X_board_input_test
+        self.X_player_input_test = X_player_input_test
         self.y_reward_x_test = y_reward_x_test
         self.y_reward_o_test = y_reward_o_test
         self.y_move_test = y_move_test
         self.sequence_length = sequence_length
-        self.player_input_test = None
 
     def on_epoch_end(self, epoch, logs=None):
         # Reshape y_move_train and y_move_test to be flat for the move output
@@ -346,8 +354,8 @@ class TestAccuracyCallback(Callback):
             reward_o_mse,
         ) = self.model.evaluate(
             {
-                "board_input": self.X_test,
-                "player_input": self.player_input_test,
+                "board_input": self.X_board_input_test,
+                "player_input": self.X_player_input_test,
             },
             {
                 "reward_x_output": self.y_reward_x_test,
@@ -444,6 +452,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
 
     test_accuracy_callback = TestAccuracyCallback(
         X_board_test,
+        X_player_test,
         y_reward_x_test,
         y_reward_o_test,
         y_move_test,
@@ -502,6 +511,7 @@ def predict_next_move(model, game):
         verbose=0,
     )
     move_probabilities = predictions[2][0]
+
     # Mask out invalid moves
     for i in range(9):
         row, col = one_hot_to_move(i)
