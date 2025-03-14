@@ -236,9 +236,13 @@ def create_transformer_model(
     board_input = keras.Input(
         shape=(sequence_length, 3, 3, 3), name="board_input"
     )
+    player_input = keras.Input(shape=(sequence_length, 1), name="player_input")
 
     # Flatten the board states
     x = layers.Reshape((sequence_length, 27))(board_input)
+
+    # Concatenate board and player inputs
+    x = layers.Concatenate(axis=-1)([x, player_input])
 
     # Embedding layer
     x = layers.Dense(embedding_dim, activation="relu")(x)
@@ -283,7 +287,7 @@ def create_transformer_model(
     )(move_x)
 
     model = keras.Model(
-        inputs={"board_input": board_input},
+        inputs={"board_input": board_input, "player_input": player_input},
         outputs=[reward_x_output, reward_o_output, move_output],
     )
     return model
@@ -326,6 +330,7 @@ class TestAccuracyCallback(Callback):
         self.y_reward_o_test = y_reward_o_test
         self.y_move_test = y_move_test
         self.sequence_length = sequence_length
+        self.player_input_test = None
 
     def on_epoch_end(self, epoch, logs=None):
         # Reshape y_move_train and y_move_test to be flat for the move output
@@ -340,7 +345,10 @@ class TestAccuracyCallback(Callback):
             reward_x_mse,
             reward_o_mse,
         ) = self.model.evaluate(
-            {"board_input": self.X_test},
+            {
+                "board_input": self.X_test,
+                "player_input": self.player_input_test,
+            },
             {
                 "reward_x_output": self.y_reward_x_test,
                 "reward_o_output": self.y_reward_o_test,
@@ -371,6 +379,18 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
             for sequence in data
         ]
     )
+    X_player = np.array(
+        [
+            np.array(
+                [
+                    np.array([example.last_player])
+                    for example in sequence.examples
+                ]
+            )
+            for sequence in data
+        ]
+    )
+
     y_move = np.array(
         [
             np.array([example.move_one_hot for example in sequence.examples])
@@ -382,6 +402,8 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     (
         X_board_train,
         X_board_test,
+        X_player_train,
+        X_player_test,
         y_move_train,
         y_move_test,
         y_reward_x_train,
@@ -390,6 +412,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
         y_reward_o_test,
     ) = train_test_split(
         X_board,
+        X_player,
         y_move,
         y_reward_x,
         y_reward_o,
@@ -432,7 +455,10 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     y_move_test = y_move_test[:, -1, :]
 
     model.fit(
-        {"board_input": X_board_train},
+        {
+            "board_input": X_board_train,
+            "player_input": X_player_train,
+        },
         {
             "reward_x_output": y_reward_x_train,
             "reward_o_output": y_reward_o_train,
@@ -440,6 +466,17 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
         },
         epochs=epochs,
         batch_size=batch_size,
+        validation_data=(
+            {
+                "board_input": X_board_test,
+                "player_input": X_player_test,
+            },
+            {
+                "reward_x_output": y_reward_x_test,
+                "reward_o_output": y_reward_o_test,
+                "move_output": y_move_test,
+            },
+        ),
         callbacks=[test_accuracy_callback],
     )
     return model
@@ -456,9 +493,15 @@ def predict_next_move(model, game):
     board_sequence[-1] = one_hot_board
     board_sequence = np.expand_dims(board_sequence, axis=0)
 
-    predictions = model.predict({"board_input": board_sequence}, verbose=0)
-    move_probabilities = predictions[2][0]
+    player_sequence = np.zeros((CONTEXT_WINDOW, 1))
+    player_sequence[-1] = 0.0 if game.current_player == 1 else 1.0
+    player_sequence = np.expand_dims(player_sequence, axis=0)
 
+    predictions = model.predict(
+        {"board_input": board_sequence, "player_input": player_sequence},
+        verbose=0,
+    )
+    move_probabilities = predictions[2][0]
     # Mask out invalid moves
     for i in range(9):
         row, col = one_hot_to_move(i)
