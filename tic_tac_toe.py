@@ -436,7 +436,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
         random_state=42,
     )
 
-    learning_rate = 0.00005
+    learning_rate = 0.0001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
@@ -754,7 +754,7 @@ def main():
         model = create_transformer_model()
         model = train_model(
             model,
-            training_data[:100],
+            training_data,
             epochs=args.epochs,
             batch_size=args.batch_size,
         )
