@@ -26,6 +26,9 @@ class TrainingSequence:
     reward: float
 
 
+CONTEXT_WINDOW = 9
+
+
 class TicTacToe:
     def __init__(self):
         self.board = np.zeros((3, 3), dtype=int)
@@ -167,7 +170,7 @@ def pad_examples(examples):
     Pads a list of TrainingExample objects with empty examples to ensure
     a fixed sequence length.
     """
-    max_len = 9
+    max_len = CONTEXT_WINDOW
     current_len = len(examples)
 
     if current_len >= max_len:
@@ -242,9 +245,9 @@ def generate_training_data():
 
 
 def create_transformer_model(
-    sequence_length=9,
-    embedding_dim=64,
-    num_heads=2,
+    sequence_length=CONTEXT_WINDOW,
+    embedding_dim=512,
+    num_heads=4,
     ff_dim=64,
     num_transformer_blocks=2,
 ):
@@ -392,7 +395,10 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     )
 
     test_accuracy_callback = TestAccuracyCallback(
-        X_board_test, y_reward_test, y_move_test, sequence_length=9
+        X_board_test,
+        y_reward_test,
+        y_move_test,
+        sequence_length=CONTEXT_WINDOW,
     )
 
     # Reshape y_move_train and y_move_test to be flat for the move output
@@ -416,7 +422,7 @@ def predict_next_move(model, game, optimize_for_win):
     # one_hot_board = np.expand_dims(one_hot_board, axis=0)
 
     # Create a sequence of board states for the model
-    board_sequence = np.zeros((9, 3, 3, 3))
+    board_sequence = np.zeros((CONTEXT_WINDOW, 3, 3, 3))
     board_sequence[-1] = one_hot_board
     board_sequence = np.expand_dims(board_sequence, axis=0)
 
