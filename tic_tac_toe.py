@@ -23,7 +23,8 @@ class TrainingExample:
 @dataclass
 class TrainingSequence:
     examples: list[TrainingExample]
-    reward: float
+    reward_x: float
+    reward_o: float
 
 
 CONTEXT_WINDOW = 9
@@ -35,7 +36,6 @@ class TicTacToe:
         self.current_player = 1  # Player X starts
         self.parent_board = None
         self.child_boards = {}  # Map (row, col) of the play to the child board
-        self.bad_example = False
 
     def is_valid_move(self, row, col):
         return 0 <= row < 3 and 0 <= col < 3 and self.board[row, col] == 0
@@ -118,20 +118,9 @@ def generate_all_games(game, counter):
         (r, c) for r in range(3) for c in range(3) if game.board[r, c] == 0
     ]
 
-    any_winner = False
-
     for row, col in empty_cells:
         new_game = game.make_move(row, col)
         generate_all_games(new_game, counter)
-        if new_game.check_winner() != 0:
-            any_winner = True
-
-    if any_winner:
-        # If there's any winner on this turn, then remove the other examples
-        # because that's not how the model should ever play.
-        for child in game.child_boards.values():
-            if child.check_winner() == 0:
-                child.bad_example = True
 
 
 def pad_examples(examples):
@@ -159,12 +148,8 @@ def pad_examples(examples):
 def create_training_examples(game):
     result = []
 
-    bad_example = False
     current = game
     while current:
-        if current.bad_example:
-            bad_example = True
-
         parent = current.parent_board
         if not parent:
             break
@@ -189,30 +174,28 @@ def create_training_examples(game):
 
     pad_examples(result)
 
-    if bad_example:
-        reward = 0.0
+    winner = game.check_winner()
+
+    if winner == 1:
+        reward_x = 1.0
+        reward_o = 0.0
+    elif winner == 2:
+        reward_x = 0.0
+        reward_o = 1.0
     else:
-        winner = game.check_winner()
-        if winner == 1:
-            reward = 1.0
-        elif winner == 2:
-            reward = 0.0
-        else:
-            reward = 0.5
+        reward_x = 0.0
+        reward_o = 0.0
 
     return TrainingSequence(
         examples=result,
-        reward=reward,
+        reward_x=reward_x,
+        reward_o=reward_o,
     )
 
 
 def iterate_games(game):
     for child in game.child_boards.values():
-        if (
-            child.check_winner() != 0
-            or child.is_board_full()
-            or child.bad_example
-        ):
+        if child.check_winner() != 0 or child.is_board_full():
             # Only yield leaf games that are complete
             yield child
         else:
@@ -276,12 +259,19 @@ def create_transformer_model(
     for _ in range(num_transformer_blocks):
         x = transformer_encoder(x, embedding_dim, num_heads, ff_dim)
 
-    # Reward branch (single output for the entire sequence)
-    reward_x = layers.GlobalAveragePooling1D()(x)
-    reward_x = layers.Dense(128, activation="relu")(reward_x)
-    reward_output = layers.Dense(
-        1, activation="sigmoid", name="reward_output"
-    )(reward_x)
+    # Reward branch for X
+    reward_x_branch = layers.GlobalAveragePooling1D()(x)
+    reward_x_branch = layers.Dense(128, activation="relu")(reward_x_branch)
+    reward_x_output = layers.Dense(
+        1, activation="sigmoid", name="reward_x_output"
+    )(reward_x_branch)
+
+    # Reward branch for O
+    reward_o_branch = layers.GlobalAveragePooling1D()(x)
+    reward_o_branch = layers.Dense(128, activation="relu")(reward_o_branch)
+    reward_o_output = layers.Dense(
+        1, activation="sigmoid", name="reward_o_output"
+    )(reward_o_branch)
 
     # Move branch
     move_x = x[:, -1, :]  # Take the last vector in the sequence
@@ -294,7 +284,7 @@ def create_transformer_model(
 
     model = keras.Model(
         inputs={"board_input": board_input},
-        outputs=[reward_output, move_output],
+        outputs=[reward_x_output, reward_o_output, move_output],
     )
     return model
 
@@ -322,30 +312,52 @@ def one_hot_to_move(move_index):
 
 
 class TestAccuracyCallback(Callback):
-    def __init__(self, X_test, y_reward_test, y_move_test, sequence_length):
+    def __init__(
+        self,
+        X_test,
+        y_reward_x_test,
+        y_reward_o_test,
+        y_move_test,
+        sequence_length,
+    ):
         super().__init__()
         self.X_test = X_test
-        self.y_reward_test = y_reward_test
+        self.y_reward_x_test = y_reward_x_test
+        self.y_reward_o_test = y_reward_o_test
         self.y_move_test = y_move_test
         self.sequence_length = sequence_length
 
     def on_epoch_end(self, epoch, logs=None):
-        # Reshape y_move_test to match the output shape
-        y_move_test_reshaped = self.y_move_test[:, -1, :]
-        loss, reward_loss, move_loss, move_accuracy, reward_mse = (
-            self.model.evaluate(
-                {"board_input": self.X_test},
-                {
-                    "reward_output": self.y_reward_test,
-                    "move_output": y_move_test_reshaped,
-                },
-                verbose=0,
-            )
+        # Reshape y_move_train and y_move_test to be flat for the move output
+        reshaped_y_move_test = self.y_move_test[:, -1, :]
+
+        (
+            loss,
+            reward_x_loss,
+            reward_o_loss,
+            move_loss,
+            reward_x_mse,
+            reward_o_mse,
+            move_accuracy,
+        ) = self.model.evaluate(
+            {"board_input": self.X_test},
+            {
+                "reward_x_output": self.y_reward_x_test,
+                "reward_o_output": self.y_reward_o_test,
+                "move_output": reshaped_y_move_test,
+            },
+            verbose=0,
         )
         print()
-        print(
-            f"Epoch {epoch+1}: Reward Loss: {reward_loss:.4f}, Move Loss: {move_loss:.4f}, Reward MSE: {reward_mse:.4f}, Move Accuracy: {move_accuracy:.4f}"
-        )
+        print()
+        print(f"Epoch {epoch+1}:")
+        print(f"  Reward X Loss: {reward_x_loss:.4f}")
+        print(f"  Reward O Loss: {reward_o_loss:.4f}")
+        print(f"  Move Loss: {move_loss:.4f}")
+        print(f"  Reward X MSE: {reward_x_mse:.4f}")
+        print(f"  Reward O MSE: {reward_o_mse:.4f}")
+        print(f"  Move Accuracy: {move_accuracy:.4f}")
+        print()
         print()
 
 
@@ -364,18 +376,22 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
             for sequence in data
         ]
     )
-    y_reward = np.array([sequence.reward for sequence in data])
+    y_reward_x = np.array([sequence.reward_x for sequence in data])
+    y_reward_o = np.array([sequence.reward_o for sequence in data])
     (
         X_board_train,
         X_board_test,
         y_move_train,
         y_move_test,
-        y_reward_train,
-        y_reward_test,
+        y_reward_x_train,
+        y_reward_x_test,
+        y_reward_o_train,
+        y_reward_o_test,
     ) = train_test_split(
         X_board,
         y_move,
-        y_reward,
+        y_reward_x,
+        y_reward_o,
         test_size=test_size,
         random_state=42,
     )
@@ -386,16 +402,26 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     model.compile(
         optimizer=optimizer,
         loss={
-            "reward_output": "binary_crossentropy",
+            "reward_x_output": "binary_crossentropy",
+            "reward_o_output": "binary_crossentropy",
             "move_output": "categorical_crossentropy",
         },
-        loss_weights={"reward_output": 0.5, "move_output": 0.5},
-        metrics={"reward_output": "mse", "move_output": "accuracy"},
+        loss_weights={
+            "reward_x_output": 0.25,
+            "reward_o_output": 0.25,
+            "move_output": 0.5,
+        },
+        metrics={
+            "reward_x_output": "mse",
+            "reward_o_output": "mse",
+            "move_output": "accuracy",
+        },
     )
 
     test_accuracy_callback = TestAccuracyCallback(
         X_board_test,
-        y_reward_test,
+        y_reward_x_test,
+        y_reward_o_test,
         y_move_test,
         sequence_length=CONTEXT_WINDOW,
     )
@@ -406,7 +432,11 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
 
     model.fit(
         {"board_input": X_board_train},
-        {"reward_output": y_reward_train, "move_output": y_move_train},
+        {
+            "reward_x_output": y_reward_x_train,
+            "reward_o_output": y_reward_o_train,
+            "move_output": y_move_train,
+        },
         epochs=epochs,
         batch_size=batch_size,
         callbacks=[test_accuracy_callback],
@@ -414,7 +444,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
     return model
 
 
-def predict_next_move(model, game, optimize_for_win):
+def predict_next_move(model, game):
     """Predicts the next move based on the current board state."""
     one_hot_board = game.one_hot_board()
     # Add a batch dimension to the input
@@ -426,11 +456,7 @@ def predict_next_move(model, game, optimize_for_win):
     board_sequence = np.expand_dims(board_sequence, axis=0)
 
     predictions = model.predict({"board_input": board_sequence}, verbose=0)
-    move_probabilities = predictions[1][0]
-
-    if not optimize_for_win:
-        # Invert the probabilities to optimize for losing
-        move_probabilities = 1 - move_probabilities
+    move_probabilities = predictions[2][0]
 
     # Mask out invalid moves
     for i in range(9):
@@ -487,7 +513,7 @@ def play_game(model, human_player):
             else:
                 print("Model (O) is thinking...")
 
-            predicted_move = predict_next_move(model, game, human_player == 1)
+            predicted_move = predict_next_move(model, game)
             row, col = predicted_move
             print(f"Model plays at: ({row}, {col})")
             game = game.make_move(row, col)
@@ -540,7 +566,8 @@ def inspect_data(data: list[TrainingSequence]):
     selected_sequence = data[selected_example_index]
 
     print(f"Inspecting sequence {selected_example_index}:")
-    print(f"Reward: {selected_sequence.reward}")
+    print(f"Reward X: {selected_sequence.reward_x}")
+    print(f"Reward O: {selected_sequence.reward_o}")
 
     i = 0
     for example in selected_sequence.examples:
