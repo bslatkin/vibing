@@ -244,9 +244,9 @@ def generate_training_data():
 def create_transformer_model(
     sequence_length=9,
     embedding_dim=64,
-    num_heads=4,
+    num_heads=2,
     ff_dim=64,
-    num_transformer_blocks=2,
+    num_transformer_blocks=4,
 ):
     # Input: Sequence of board states
     board_input = keras.Input(
@@ -332,7 +332,7 @@ class TestAccuracyCallback(Callback):
         y_move_test_reshaped = self.y_move_test[:, -1, :]
         loss, reward_loss, move_loss, move_accuracy, reward_mse = (
             self.model.evaluate(
-                self.X_test,
+                {"board_input": self.X_test},
                 {
                     "reward_output": self.y_reward_test,
                     "move_output": y_move_test_reshaped,
