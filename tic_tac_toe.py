@@ -243,8 +243,8 @@ def generate_training_data():
 
 def create_transformer_model(
     sequence_length=9,
-    embedding_dim=64,
-    num_heads=4,
+    embedding_dim=128,
+    num_heads=2,
     ff_dim=128,
     num_transformer_blocks=2,
 ):
@@ -259,10 +259,8 @@ def create_transformer_model(
     # Embedding layer
     x = layers.Dense(embedding_dim, activation="relu")(x)
 
-    # Positional encoding (simplified example)
-    positions = np.arange(0, sequence_length)
+    # Positional encoding
     positional_encodings = np.zeros((sequence_length, embedding_dim))
-
     for pos in range(sequence_length):
         for i in range(0, embedding_dim, 2):
             denominator = np.power(10000, i / embedding_dim)
@@ -287,9 +285,11 @@ def create_transformer_model(
     # Move branch
     move_x = x[:, -1, :]  # Take the last vector in the sequence
     move_x = layers.Dense(128, activation="relu")(move_x)
-    move_output = layers.Dense(9, activation="softmax", name="move_output")(
-        move_x
-    )
+    move_output = layers.Dense(
+        9,
+        activation="softmax",
+        name="move_output",
+    )(move_x)
 
     model = keras.Model(
         inputs={"board_input": board_input},
