@@ -246,9 +246,9 @@ def generate_training_data():
 
 def create_transformer_model(
     sequence_length=CONTEXT_WINDOW,
-    embedding_dim=128,
+    embedding_dim=64,
     num_heads=1,
-    ff_dim=32,
+    ff_dim=16,
     num_transformer_blocks=1,
 ):
     # Input: Sequence of board states
