@@ -336,9 +336,9 @@ class TestAccuracyCallback(Callback):
             reward_x_loss,
             reward_o_loss,
             move_loss,
+            move_accuracy,
             reward_x_mse,
             reward_o_mse,
-            move_accuracy,
         ) = self.model.evaluate(
             {"board_input": self.X_test},
             {
@@ -351,6 +351,7 @@ class TestAccuracyCallback(Callback):
         print()
         print()
         print(f"Epoch {epoch+1}:")
+        print(f"  Loss: {loss:.4f}")
         print(f"  Reward X Loss: {reward_x_loss:.4f}")
         print(f"  Reward O Loss: {reward_o_loss:.4f}")
         print(f"  Move Loss: {move_loss:.4f}")
