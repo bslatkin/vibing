@@ -378,7 +378,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
         random_state=42,
     )
 
-    learning_rate = 0.00005  # Example: Lower than the default 0.001
+    learning_rate = 0.0001  # Example: Lower than the default 0.001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
