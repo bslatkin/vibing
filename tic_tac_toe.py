@@ -246,10 +246,10 @@ def generate_training_data():
 
 def create_transformer_model(
     sequence_length=CONTEXT_WINDOW,
-    embedding_dim=256,
-    num_heads=9,
-    ff_dim=16,
-    num_transformer_blocks=1,
+    embedding_dim=128,
+    num_heads=4,
+    ff_dim=32,
+    num_transformer_blocks=2,
 ):
     # Input: Sequence of board states
     board_input = keras.Input(
@@ -304,9 +304,10 @@ def create_transformer_model(
 # Helper function for a transformer block
 def transformer_encoder(inputs, embedding_dim, num_heads, ff_dim):
     # Attention and Normalization
-    x = layers.MultiHeadAttention(num_heads=num_heads, key_dim=embedding_dim)(
-        inputs, inputs
-    )
+    x = layers.MultiHeadAttention(
+        num_heads=num_heads,
+        key_dim=embedding_dim,
+    )(inputs, inputs)
     x = layers.LayerNormalization(epsilon=1e-6)(x)
     res = x + inputs
 
@@ -381,7 +382,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
         random_state=42,
     )
 
-    learning_rate = 0.001
+    learning_rate = 0.00005
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
