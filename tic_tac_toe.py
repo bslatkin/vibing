@@ -246,10 +246,10 @@ def generate_training_data():
 
 def create_transformer_model(
     sequence_length=CONTEXT_WINDOW,
-    embedding_dim=512,
-    num_heads=4,
-    ff_dim=64,
-    num_transformer_blocks=2,
+    embedding_dim=128,
+    num_heads=1,
+    ff_dim=32,
+    num_transformer_blocks=1,
 ):
     # Input: Sequence of board states
     board_input = keras.Input(
@@ -381,7 +381,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
         random_state=42,
     )
 
-    learning_rate = 0.00005  # Example: Lower than the default 0.001
+    learning_rate = 0.001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
