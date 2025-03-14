@@ -35,9 +35,7 @@ class TicTacToe:
         self.current_player = 1  # Player X starts
         self.parent_board = None
         self.child_boards = {}  # Map (row, col) of the play to the child board
-        self.win_probability_x = None
-        self.win_probability_o = None
-        self.skip = False
+        self.bad_example = False
 
     def is_valid_move(self, row, col):
         return 0 <= row < 3 and 0 <= col < 3 and self.board[row, col] == 0
@@ -107,19 +105,12 @@ def probability_mean(values_iter):
     return total / len(values)
 
 
-def skip_children(game):
-    for child in game.child_boards.values():
-        child.skip = True
-        skip_children(child)
-
-
-def generate_all_games(game, all_games):
+def generate_all_games(game, counter):
     winner = game.check_winner()
     if winner != 0 or game.is_board_full():
-        all_games.append(game)
-
-        if all_games and len(all_games) % 100_000 == 0:
-            print(f"Generated {len(all_games)} games")
+        counter[0] += 1
+        if counter[0] and counter[0] % 100_000 == 0:
+            print(f"Generated {counter[0]} games")
 
         return
 
@@ -131,7 +122,7 @@ def generate_all_games(game, all_games):
 
     for row, col in empty_cells:
         new_game = game.make_move(row, col)
-        generate_all_games(new_game, all_games)
+        generate_all_games(new_game, counter)
         if new_game.check_winner() != 0:
             any_winner = True
 
@@ -140,7 +131,7 @@ def generate_all_games(game, all_games):
         # because that's not how the model should ever play.
         for child in game.child_boards.values():
             if child.check_winner() == 0:
-                skip_children(child)
+                child.bad_example = True
 
 
 def pad_examples(examples):
@@ -168,8 +159,12 @@ def pad_examples(examples):
 def create_training_examples(game):
     result = []
 
+    bad_example = False
     current = game
     while current:
+        if current.bad_example:
+            bad_example = True
+
         parent = current.parent_board
         if not parent:
             break
@@ -194,19 +189,34 @@ def create_training_examples(game):
 
     pad_examples(result)
 
-    winner = game.check_winner()
-
-    if winner == 1:
-        reward = 1.0
-    elif winner == 2:
+    if bad_example:
         reward = 0.0
     else:
-        reward = 0.5
+        winner = game.check_winner()
+        if winner == 1:
+            reward = 1.0
+        elif winner == 2:
+            reward = 0.0
+        else:
+            reward = 0.5
 
     return TrainingSequence(
         examples=result,
         reward=reward,
     )
+
+
+def iterate_games(game):
+    for child in game.child_boards.values():
+        if (
+            child.check_winner() != 0
+            or child.is_board_full()
+            or child.bad_example
+        ):
+            # Only yield leaf games that are complete
+            yield child
+        else:
+            yield from iterate_games(child)
 
 
 def generate_training_data():
@@ -216,16 +226,13 @@ def generate_training_data():
     print("Generating all possible games...")
 
     game = TicTacToe()
-    all_games = []
-    generate_all_games(game, all_games)
-    print(f"Finished generating data. {len(all_games)} games")
+    counter = [0]
+    generate_all_games(game, counter)
+    print(f"Finished generating data. {counter[0]} games")
 
     data = []
-    for game in all_games:
-        if game.skip:
-            continue
-
-        data.append(create_training_examples(game))
+    for child in iterate_games(game):
+        data.append(create_training_examples(child))
 
         if data and len(data) % 100_000 == 0:
             print(f"Generated {len(data)} examples")
@@ -535,11 +542,13 @@ def inspect_data(data: list[TrainingSequence]):
     print(f"Inspecting sequence {selected_example_index}:")
     print(f"Reward: {selected_sequence.reward}")
 
-    for i, example in enumerate(selected_sequence.examples):
+    i = 0
+    for example in selected_sequence.examples:
         if np.all(example.move_one_hot == 0):
             continue
 
-        print(f"\nExample {i+1} in sequence:")
+        i += 1
+        print(f"\nExample {i} in sequence:")
         print("-" * 20)
 
         # Print the board state
