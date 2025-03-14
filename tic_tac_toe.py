@@ -244,9 +244,9 @@ def generate_training_data():
 def create_transformer_model(
     sequence_length=9,
     embedding_dim=64,
-    num_heads=2,
+    num_heads=4,
     ff_dim=64,
-    num_transformer_blocks=4,
+    num_transformer_blocks=2,
 ):
     # Input: Sequence of board states
     board_input = keras.Input(
