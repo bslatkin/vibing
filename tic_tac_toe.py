@@ -330,7 +330,7 @@ class TestAccuracyCallback(Callback):
     def on_epoch_end(self, epoch, logs=None):
         # Reshape y_move_test to match the output shape
         y_move_test_reshaped = self.y_move_test[:, -1, :]
-        loss, reward_loss, move_loss, reward_mse, move_accuracy = (
+        loss, reward_loss, move_loss, move_accuracy, reward_mse = (
             self.model.evaluate(
                 self.X_test,
                 {
