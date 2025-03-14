@@ -241,21 +241,29 @@ def create_transformer_model(
         name="player_input",
     )
 
+    # Input: Sequence of board states
+    board_input = keras.Input(
+        shape=(sequence_length, 3, 3, 3), name="board_input"
+    )
+    player_input = keras.Input(shape=(sequence_length, 1), name="player_input")
+
+    # Flatten the board states
     board_x = layers.Reshape((sequence_length, 27))(board_input)
-    board_x = layers.Dense(embedding_dim, activation="relu")(board_x)
+    player_input_x = layers.Reshape((sequence_length, 1))(player_input)
 
-    player_x = layers.Dense(embedding_dim, activation="relu")(player_input)
+    # Concatenate board and player inputs
+    x = layers.Concatenate(axis=-1)([board_x, player_input_x])
 
-    x = layers.Concatenate(axis=-1)([board_x, player_x])
-    combined_dim = 2 * embedding_dim
+    # Embedding layer
+    x = layers.Dense(embedding_dim, activation="relu")(x)
 
     # Positional encoding
-    positional_encodings = np.zeros((sequence_length, combined_dim))
+    positional_encodings = np.zeros((sequence_length, embedding_dim))
     for pos in range(sequence_length):
-        for i in range(0, combined_dim, 2):
-            denominator = np.power(10000, i / combined_dim)
+        for i in range(0, embedding_dim, 2):
+            denominator = np.power(10000, i / embedding_dim)
             positional_encodings[pos, i] = np.sin(pos / denominator)
-            if i + 1 < combined_dim:
+            if i + 1 < embedding_dim:
                 positional_encodings[pos, i + 1] = np.cos(pos / denominator)
 
     positional_encodings = tf.constant(positional_encodings, dtype=tf.float32)
@@ -264,7 +272,7 @@ def create_transformer_model(
 
     # Transformer blocks
     for _ in range(num_transformer_blocks):
-        x = transformer_encoder(x, combined_dim, num_heads, ff_dim)
+        x = transformer_encoder(x, embedding_dim, num_heads, ff_dim)
 
     # Reward branch for X
     reward_x_branch = layers.GlobalAveragePooling1D()(x)
@@ -746,7 +754,7 @@ def main():
         model = create_transformer_model()
         model = train_model(
             model,
-            training_data,
+            training_data[:100],
             epochs=args.epochs,
             batch_size=args.batch_size,
         )
