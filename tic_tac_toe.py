@@ -378,6 +378,7 @@ class TestAccuracyCallback(Callback):
         super().__init__()
         self.X_board_input_test = X_board_input_test
         self.X_player_input_test = X_player_input_test
+        self.y_reward_x_test = y_reward_x_test
         self.y_reward_o_test = y_reward_o_test
         self.y_move_test = y_move_test
         self.sequence_length = sequence_length
@@ -819,7 +820,7 @@ def main():
         try:
             model = train_model(
                 model,
-                training_data,
+                training_data[:100],
                 checkpoint_callback,
                 epochs=args.epochs,
                 batch_size=args.batch_size,
