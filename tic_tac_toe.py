@@ -123,6 +123,15 @@ def generate_all_games(game, counter):
         generate_all_games(new_game, counter)
 
 
+# Use a single value for the empty example so pickling the data generated
+# shares the object reference instead of duplicating it.
+EMPTY_EXAMPLE = TrainingExample(
+    board_state_one_hot=np.zeros((3, 3, 3)),
+    move_one_hot=np.zeros(9),
+    last_player=-1,
+)
+
+
 def pad_examples(examples):
     """
     Pads a list of TrainingExample objects with empty examples to ensure
@@ -137,16 +146,22 @@ def pad_examples(examples):
     padding_needed = max_len - current_len
 
     for _ in range(padding_needed):
-        empty_example = TrainingExample(
-            board_state_one_hot=np.zeros((3, 3, 3)),
-            move_one_hot=np.zeros(9),
-            last_player=-1,
-        )
-        examples.insert(0, empty_example)
+        examples.insert(0, EMPTY_EXAMPLE)
 
 
 def create_training_examples(game):
-    result = []
+    all_examples = []
+
+    winner = game.check_winner()
+    if winner == 1:
+        reward_x = 1.0
+        reward_o = -1.0
+    elif winner == 2:
+        reward_x = -1.0
+        reward_o = 1.0
+    else:
+        reward_x = 0.0
+        reward_o = 0.0
 
     current = game
     while current:
@@ -168,29 +183,33 @@ def create_training_examples(game):
             move_one_hot=move_one_hot,
             last_player=0.0 if parent.current_player == 1 else 1.0,
         )
-        result.insert(0, example)
+        all_examples.insert(0, example)
 
         current = parent
 
-    pad_examples(result)
+    result = []
 
-    winner = game.check_winner()
+    for i in range(len(all_examples)):
+        subsequence = all_examples[: i + 1]
+        pad_examples(subsequence)
 
-    if winner == 1:
-        reward_x = 1.0
-        reward_o = 0.0
-    elif winner == 2:
-        reward_x = 0.0
-        reward_o = 1.0
-    else:
-        reward_x = 0.0
-        reward_o = 0.0
+        if i == len(all_examples) - 1:
+            # Reward is only assigned on the last play
+            current_reward_x = reward_x
+            current_reward_o = reward_o
+        else:
+            current_reward_x = 0.0
+            current_reward_o = 0.0
 
-    return TrainingSequence(
-        examples=result,
-        reward_x=reward_x,
-        reward_o=reward_o,
-    )
+        result.append(
+            TrainingSequence(
+                examples=subsequence,
+                reward_x=current_reward_x,
+                reward_o=current_reward_o,
+            )
+        )
+
+    return result
 
 
 def iterate_games(game):
@@ -215,7 +234,7 @@ def generate_training_data():
 
     data = []
     for child in iterate_games(game):
-        data.append(create_training_examples(child))
+        data.extend(create_training_examples(child))
 
         if data and len(data) % 100_000 == 0:
             print(f"Generated {len(data)} examples")
@@ -284,7 +303,7 @@ def create_transformer_model(
     reward_x_branch = layers.Dense(128, activation="relu")(reward_x_branch)
     reward_x_output = layers.Dense(
         1,
-        activation="sigmoid",
+        activation="tanh",
         name="reward_x_output",
     )(reward_x_branch)
 
@@ -293,7 +312,7 @@ def create_transformer_model(
     reward_o_branch = layers.Dense(128, activation="relu")(reward_o_branch)
     reward_o_output = layers.Dense(
         1,
-        activation="sigmoid",
+        activation="tanh",
         name="reward_o_output",
     )(reward_o_branch)
 
@@ -306,11 +325,15 @@ def create_transformer_model(
         name="move_output",
     )(move_branch)
     model = keras.Model(
-        inputs={"board_input": board_input, "player_input": player_input,},
+        inputs={
+            "board_input": board_input,
+            "player_input": player_input,
+        },
         outputs=[
             reward_x_output,
             reward_o_output,
             move_output,
+        ],
     )
     return model
 
@@ -386,8 +409,6 @@ class TestAccuracyCallback(Callback):
         print(f"  Reward X Loss: {results['reward_x_output_loss']:.4f}")
         print(f"  Reward O Loss: {results['reward_o_output_loss']:.4f}")
         print(f"  Move Loss: {results['move_output_loss']:.4f}")
-        print(f"  Reward X MSE: {results['reward_x_output_mse']:.4f}")
-        print(f"  Reward O MSE: {results['reward_o_output_mse']:.4f}")
         print(f"  Move Accuracy: {results['move_output_accuracy']:.4f}")
         print()
         print()
@@ -416,8 +437,12 @@ def train_model(
         ]
     )
 
-    y_move = np.array([
-        np.array([example.move_one_hot for example in sequence.examples]) for sequence in data])
+    y_move = np.array(
+        [
+            np.array([example.move_one_hot for example in sequence.examples])
+            for sequence in data
+        ]
+    )
 
     y_reward_x = np.array([sequence.reward_x for sequence in data])
     y_reward_o = np.array([sequence.reward_o for sequence in data])
@@ -449,8 +474,8 @@ def train_model(
     model.compile(
         optimizer=optimizer,
         loss={
-            "reward_x_output": "binary_crossentropy",
-            "reward_o_output": "binary_crossentropy",
+            "reward_x_output": "mse",
+            "reward_o_output": "mse",
             "move_output": "categorical_crossentropy",
         },
         loss_weights={
@@ -459,8 +484,6 @@ def train_model(
             "move_output": 0.5,
         },
         metrics={
-            "reward_x_output": "mse",
-            "reward_o_output": "mse",
             "move_output": "accuracy",
         },
     )
