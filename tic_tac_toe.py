@@ -241,9 +241,8 @@ def create_transformer_model(
     sequence_length=CONTEXT_WINDOW,
     embedding_dim=128,
     num_heads=4,
-    ff_dim=32,
-    num_transformer_blocks=2,
-    dropout_rate=0.1,
+    ff_dim=64,
+    num_transformer_blocks=4,
 ):
     """Creates a transformer model for Tic-Tac-Toe."""
     board_input = keras.Input(
@@ -270,8 +269,6 @@ def create_transformer_model(
 
     # Embedding layer
     x = layers.Dense(embedding_dim, activation="relu")(x)
-    x = layers.Dropout(dropout_rate)(x)
-
     # Positional encoding
     positional_encodings = np.zeros((sequence_length, embedding_dim))
     for pos in range(sequence_length):
@@ -288,13 +285,15 @@ def create_transformer_model(
     # Transformer blocks
     for _ in range(num_transformer_blocks):
         x = transformer_encoder(
-            x, embedding_dim, num_heads, ff_dim, dropout_rate
+            x,
+            embedding_dim,
+            num_heads,
+            ff_dim,
         )
 
     # Reward branch for X
     reward_x_branch = layers.GlobalAveragePooling1D()(x)
     reward_x_branch = layers.Dense(128, activation="relu")(reward_x_branch)
-    reward_x_branch = layers.Dropout(dropout_rate)(reward_x_branch)
     reward_x_output = layers.Dense(
         1,
         activation="sigmoid",
@@ -304,7 +303,6 @@ def create_transformer_model(
     # Reward branch for O
     reward_o_branch = layers.GlobalAveragePooling1D()(x)
     reward_o_branch = layers.Dense(128, activation="relu")(reward_o_branch)
-    reward_o_branch = layers.Dropout(dropout_rate)(reward_o_branch)
     reward_o_output = layers.Dense(
         1,
         activation="sigmoid",
@@ -314,7 +312,6 @@ def create_transformer_model(
     # Move branch for X
     move_x_branch = x[:, -1, :]  # Take the last vector in the sequence
     move_x_branch = layers.Dense(128, activation="relu")(move_x_branch)
-    move_x_branch = layers.Dropout(dropout_rate)(move_x_branch)
     move_x_output = layers.Dense(
         9,
         activation="softmax",
@@ -324,7 +321,6 @@ def create_transformer_model(
     # Move branch for O
     move_o_branch = x[:, -1, :]  # Take the last vector in the sequence
     move_o_branch = layers.Dense(128, activation="relu")(move_o_branch)
-    move_o_branch = layers.Dropout(dropout_rate)(move_o_branch)
     move_o_output = layers.Dense(
         9,
         activation="softmax",
@@ -345,7 +341,10 @@ def create_transformer_model(
 
 # Helper function for a transformer block
 def transformer_encoder(
-    inputs, embedding_dim, num_heads, ff_dim, dropout_rate
+    inputs,
+    embedding_dim,
+    num_heads,
+    ff_dim,
 ):
     # Attention and Normalization
     x = layers.MultiHeadAttention(
@@ -357,7 +356,6 @@ def transformer_encoder(
 
     # Feed Forward and Normalization
     x = layers.Dense(ff_dim, activation="relu")(res)
-    x = layers.Dropout(dropout_rate)(x)
     x = layers.Dense(embedding_dim)(x)
     x = layers.LayerNormalization(epsilon=1e-6)(x)
     return x + res
@@ -387,6 +385,7 @@ class TestAccuracyCallback(Callback):
         self.y_move_x_test = y_move_x_test
         self.y_move_o_test = y_move_o_test
         self.sequence_length = sequence_length
+        self.test_set_size = len(X_board_input_test)
 
     def on_epoch_end(self, epoch, logs=None):
         # Reshape y_move_x_test and y_move_o_test to be flat for the move output
@@ -411,6 +410,7 @@ class TestAccuracyCallback(Callback):
         print()
         print()
         print(f"Epoch {epoch+1}:")
+        print(f"  Test set size: {self.test_set_size}")
         print(f"  Loss: {results['loss']:.4f}")
         print(f"  Reward X Loss: {results['reward_x_output_loss']:.4f}")
         print(f"  Reward O Loss: {results['reward_o_output_loss']:.4f}")
@@ -486,7 +486,7 @@ def train_model(
         random_state=42,
     )
 
-    learning_rate = 0.00005
+    learning_rate = 0.00001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
@@ -498,10 +498,10 @@ def train_model(
             "move_o_output": "categorical_crossentropy",
         },
         loss_weights={
-            "reward_x_output": 0.25,
-            "reward_o_output": 0.25,
-            "move_x_output": 0.25,
-            "move_o_output": 0.25,
+            "reward_x_output": 0.1,
+            "reward_o_output": 0.1,
+            "move_x_output": 0.4,
+            "move_o_output": 0.4,
         },
         metrics={
             "reward_x_output": "mse",
@@ -804,12 +804,6 @@ def main():
         default="trained_model.keras",
         help="Output file for trained model",
     )
-    train_parser.add_argument(
-        "--dropout_rate",
-        type=float,
-        default=0.1,
-        help="Dropout rate for the model",
-    )
 
     # Inspect Data Subparser
     inspect_parser = subparsers.add_parser(
@@ -855,9 +849,7 @@ def main():
         if args.resume_model:
             model = load_model(os.path.join(args.data_dir, args.resume_model))
         else:
-            model = create_transformer_model(
-                dropout_rate=args.dropout_rate,
-            )
+            model = create_transformer_model()
 
         output_path = os.path.join(args.data_dir, args.output_model)
         checkpoint_callback = CheckpointCallback(output_path)
