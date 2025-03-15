@@ -149,19 +149,8 @@ def pad_examples(examples):
         examples.insert(0, EMPTY_EXAMPLE)
 
 
-def create_training_examples(game):
+def extract_game_moves(game):
     all_examples = []
-
-    winner = game.check_winner()
-    if winner == 1:
-        reward_x = 1.0
-        reward_o = -1.0
-    elif winner == 2:
-        reward_x = -1.0
-        reward_o = 1.0
-    else:
-        reward_x = 0.0
-        reward_o = 0.0
 
     current = game
     while current:
@@ -186,6 +175,23 @@ def create_training_examples(game):
         all_examples.insert(0, example)
 
         current = parent
+
+    return all_examples
+
+
+def create_training_examples(game):
+    all_examples = extract_game_moves(game)
+
+    winner = game.check_winner()
+    if winner == 1:
+        reward_x = 1.0
+        reward_o = -1.0
+    elif winner == 2:
+        reward_x = -1.0
+        reward_o = 1.0
+    else:
+        reward_x = 0.0
+        reward_o = 0.0
 
     result = []
 
@@ -248,8 +254,8 @@ def create_transformer_model(
     sequence_length=CONTEXT_WINDOW,
     embedding_dim=128,
     num_heads=4,
-    ff_dim=64,
-    num_transformer_blocks=4,
+    ff_dim=32,
+    num_transformer_blocks=2,
 ):
     """Creates a transformer model for Tic-Tac-Toe with a single move output."""
     board_input = keras.Input(
@@ -531,21 +537,21 @@ def train_model(
 
 def predict_next_move(model, game):
     """Predicts the next move based on the current board state."""
-    one_hot_board = game.one_hot_board()
-    # Add a batch dimension to the input
-    # one_hot_board = np.expand_dims(one_hot_board, axis=0)
-
-    # Create a sequence of board states for the model
-    board_sequence = np.zeros((CONTEXT_WINDOW, 3, 3, 3))
-    board_sequence[-1] = one_hot_board
-    board_sequence = np.expand_dims(board_sequence, axis=0)
-
-    player_sequence = np.zeros((CONTEXT_WINDOW, 1))
-    player_sequence[-1] = 0.0 if game.current_player == 1 else 1.0
-    player_sequence = np.expand_dims(player_sequence, axis=0)
+    all_examples = extract_game_moves(game)
+    pad_examples(all_examples)
 
     predictions = model.predict(
-        {"board_input": board_sequence, "player_input": player_sequence},
+        {
+            "board_input": np.expand_dims(
+                np.array(
+                    [example.board_state_one_hot for example in all_examples]
+                ),
+                axis=0,
+            ),
+            "player_input": np.array(
+                [[np.array([example.last_player]) for example in all_examples]]
+            ),
+        },
         verbose=0,
     )
     move_probabilities = predictions[2][0]
@@ -820,7 +826,7 @@ def main():
         try:
             model = train_model(
                 model,
-                training_data[:100],
+                training_data,
                 checkpoint_callback,
                 epochs=args.epochs,
                 batch_size=args.batch_size,
