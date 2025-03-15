@@ -16,7 +16,8 @@ from tensorflow.keras.callbacks import Callback
 @dataclass
 class TrainingExample:
     board_state_one_hot: np.ndarray
-    move_one_hot: np.ndarray
+    move_x_one_hot: np.ndarray
+    move_o_one_hot: np.ndarray
     last_player: int
 
 
@@ -139,7 +140,8 @@ def pad_examples(examples):
     for _ in range(padding_needed):
         empty_example = TrainingExample(
             board_state_one_hot=np.zeros((3, 3, 3)),
-            move_one_hot=np.zeros(9),
+            move_x_one_hot=np.zeros(9),
+            move_o_one_hot=np.zeros(9),
             last_player=-1,
         )
         examples.insert(0, empty_example)
@@ -162,10 +164,20 @@ def create_training_examples(game):
 
         move_one_hot = np.zeros(9)
         move_one_hot[row * 3 + col] = 1
+        not_turn_move_one_hot = np.zeros(9)
 
         example = TrainingExample(
             board_state_one_hot=parent.one_hot_board(),
-            move_one_hot=move_one_hot,
+            move_x_one_hot=(
+                move_one_hot
+                if parent.current_player == 1
+                else not_turn_move_one_hot
+            ),
+            move_o_one_hot=(
+                move_one_hot
+                if parent.current_player == 2
+                else not_turn_move_one_hot
+            ),
             last_player=0.0 if parent.current_player == 1 else 1.0,
         )
         result.insert(0, example)
@@ -231,7 +243,9 @@ def create_transformer_model(
     num_heads=4,
     ff_dim=32,
     num_transformer_blocks=2,
+    dropout_rate=0.1,
 ):
+    """Creates a transformer model for Tic-Tac-Toe."""
     board_input = keras.Input(
         shape=(sequence_length, 3, 3, 3),
         name="board_input",
@@ -256,6 +270,7 @@ def create_transformer_model(
 
     # Embedding layer
     x = layers.Dense(embedding_dim, activation="relu")(x)
+    x = layers.Dropout(dropout_rate)(x)
 
     # Positional encoding
     positional_encodings = np.zeros((sequence_length, embedding_dim))
@@ -272,11 +287,14 @@ def create_transformer_model(
 
     # Transformer blocks
     for _ in range(num_transformer_blocks):
-        x = transformer_encoder(x, embedding_dim, num_heads, ff_dim)
+        x = transformer_encoder(
+            x, embedding_dim, num_heads, ff_dim, dropout_rate
+        )
 
     # Reward branch for X
     reward_x_branch = layers.GlobalAveragePooling1D()(x)
     reward_x_branch = layers.Dense(128, activation="relu")(reward_x_branch)
+    reward_x_branch = layers.Dropout(dropout_rate)(reward_x_branch)
     reward_x_output = layers.Dense(
         1,
         activation="sigmoid",
@@ -286,30 +304,49 @@ def create_transformer_model(
     # Reward branch for O
     reward_o_branch = layers.GlobalAveragePooling1D()(x)
     reward_o_branch = layers.Dense(128, activation="relu")(reward_o_branch)
+    reward_o_branch = layers.Dropout(dropout_rate)(reward_o_branch)
     reward_o_output = layers.Dense(
         1,
         activation="sigmoid",
         name="reward_o_output",
     )(reward_o_branch)
 
-    # Move branch
-    move_x = x[:, -1, :]  # Take the last vector in the sequence
-    move_x = layers.Dense(128, activation="relu")(move_x)
-    move_output = layers.Dense(
+    # Move branch for X
+    move_x_branch = x[:, -1, :]  # Take the last vector in the sequence
+    move_x_branch = layers.Dense(128, activation="relu")(move_x_branch)
+    move_x_branch = layers.Dropout(dropout_rate)(move_x_branch)
+    move_x_output = layers.Dense(
         9,
         activation="softmax",
-        name="move_output",
-    )(move_x)
+        name="move_x_output",
+    )(move_x_branch)
+
+    # Move branch for O
+    move_o_branch = x[:, -1, :]  # Take the last vector in the sequence
+    move_o_branch = layers.Dense(128, activation="relu")(move_o_branch)
+    move_o_branch = layers.Dropout(dropout_rate)(move_o_branch)
+    move_o_output = layers.Dense(
+        9,
+        activation="softmax",
+        name="move_o_output",
+    )(move_o_branch)
 
     model = keras.Model(
         inputs={"board_input": board_input, "player_input": player_input},
-        outputs=[reward_x_output, reward_o_output, move_output],
+        outputs=[
+            reward_x_output,
+            reward_o_output,
+            move_x_output,
+            move_o_output,
+        ],
     )
     return model
 
 
 # Helper function for a transformer block
-def transformer_encoder(inputs, embedding_dim, num_heads, ff_dim):
+def transformer_encoder(
+    inputs, embedding_dim, num_heads, ff_dim, dropout_rate
+):
     # Attention and Normalization
     x = layers.MultiHeadAttention(
         num_heads=num_heads,
@@ -320,6 +357,7 @@ def transformer_encoder(inputs, embedding_dim, num_heads, ff_dim):
 
     # Feed Forward and Normalization
     x = layers.Dense(ff_dim, activation="relu")(res)
+    x = layers.Dropout(dropout_rate)(x)
     x = layers.Dense(embedding_dim)(x)
     x = layers.LayerNormalization(epsilon=1e-6)(x)
     return x + res
@@ -337,7 +375,8 @@ class TestAccuracyCallback(Callback):
         X_player_input_test,
         y_reward_x_test,
         y_reward_o_test,
-        y_move_test,
+        y_move_x_test,
+        y_move_o_test,
         sequence_length,
     ):
         super().__init__()
@@ -345,12 +384,14 @@ class TestAccuracyCallback(Callback):
         self.X_player_input_test = X_player_input_test
         self.y_reward_x_test = y_reward_x_test
         self.y_reward_o_test = y_reward_o_test
-        self.y_move_test = y_move_test
+        self.y_move_x_test = y_move_x_test
+        self.y_move_o_test = y_move_o_test
         self.sequence_length = sequence_length
 
     def on_epoch_end(self, epoch, logs=None):
-        # Reshape y_move_train and y_move_test to be flat for the move output
-        reshaped_y_move_test = self.y_move_test[:, -1, :]
+        # Reshape y_move_x_test and y_move_o_test to be flat for the move output
+        reshaped_y_move_x_test = self.y_move_x_test[:, -1, :]
+        reshaped_y_move_o_test = self.y_move_o_test[:, -1, :]
 
         results = self.model.evaluate(
             {
@@ -360,7 +401,8 @@ class TestAccuracyCallback(Callback):
             {
                 "reward_x_output": self.y_reward_x_test,
                 "reward_o_output": self.y_reward_o_test,
-                "move_output": reshaped_y_move_test,
+                "move_x_output": reshaped_y_move_x_test,
+                "move_o_output": reshaped_y_move_o_test,
             },
             verbose=0,
             return_dict=True,
@@ -372,10 +414,12 @@ class TestAccuracyCallback(Callback):
         print(f"  Loss: {results['loss']:.4f}")
         print(f"  Reward X Loss: {results['reward_x_output_loss']:.4f}")
         print(f"  Reward O Loss: {results['reward_o_output_loss']:.4f}")
-        print(f"  Move Loss: {results['move_output_loss']:.4f}")
+        print(f"  Move X Loss: {results['move_x_output_loss']:.4f}")
+        print(f"  Move O Loss: {results['move_o_output_loss']:.4f}")
         print(f"  Reward X MSE: {results['reward_x_output_mse']:.4f}")
         print(f"  Reward O MSE: {results['reward_o_output_mse']:.4f}")
-        print(f"  Move Accuracy: {results['move_output_accuracy']:.4f}")
+        print(f"  Move X Accuracy: {results['move_x_output_accuracy']:.4f}")
+        print(f"  Move O Accuracy: {results['move_o_output_accuracy']:.4f}")
         print()
         print()
 
@@ -403,21 +447,30 @@ def train_model(
         ]
     )
 
-    y_move = np.array(
+    y_move_x = np.array(
         [
-            np.array([example.move_one_hot for example in sequence.examples])
+            np.array([example.move_x_one_hot for example in sequence.examples])
+            for sequence in data
+        ]
+    )
+    y_move_o = np.array(
+        [
+            np.array([example.move_o_one_hot for example in sequence.examples])
             for sequence in data
         ]
     )
     y_reward_x = np.array([sequence.reward_x for sequence in data])
     y_reward_o = np.array([sequence.reward_o for sequence in data])
+
     (
         X_board_train,
         X_board_test,
         X_player_train,
         X_player_test,
-        y_move_train,
-        y_move_test,
+        y_move_x_train,
+        y_move_x_test,
+        y_move_o_train,
+        y_move_o_test,
         y_reward_x_train,
         y_reward_x_test,
         y_reward_o_train,
@@ -425,7 +478,8 @@ def train_model(
     ) = train_test_split(
         X_board,
         X_player,
-        y_move,
+        y_move_x,
+        y_move_o,
         y_reward_x,
         y_reward_o,
         test_size=test_size,
@@ -440,17 +494,20 @@ def train_model(
         loss={
             "reward_x_output": "binary_crossentropy",
             "reward_o_output": "binary_crossentropy",
-            "move_output": "categorical_crossentropy",
+            "move_x_output": "categorical_crossentropy",
+            "move_o_output": "categorical_crossentropy",
         },
         loss_weights={
             "reward_x_output": 0.25,
             "reward_o_output": 0.25,
-            "move_output": 0.5,
+            "move_x_output": 0.25,
+            "move_o_output": 0.25,
         },
         metrics={
             "reward_x_output": "mse",
             "reward_o_output": "mse",
-            "move_output": "accuracy",
+            "move_x_output": "accuracy",
+            "move_o_output": "accuracy",
         },
     )
 
@@ -459,14 +516,16 @@ def train_model(
         X_player_test,
         y_reward_x_test,
         y_reward_o_test,
-        y_move_test,
+        y_move_x_test,
+        y_move_o_test,
         sequence_length=CONTEXT_WINDOW,
     )
 
-    # Reshape y_move_train and y_move_test to be flat for the move output
-    y_move_train = y_move_train[:, -1, :]
-    y_move_test = y_move_test[:, -1, :]
-
+    # Reshape y_move_x_train and y_move_o_train to be flat for the move output
+    y_move_x_train = y_move_x_train[:, -1, :]
+    y_move_x_test = y_move_x_test[:, -1, :]
+    y_move_o_train = y_move_o_train[:, -1, :]
+    y_move_o_test = y_move_o_test[:, -1, :]
     model.fit(
         {
             "board_input": X_board_train,
@@ -475,7 +534,8 @@ def train_model(
         {
             "reward_x_output": y_reward_x_train,
             "reward_o_output": y_reward_o_train,
-            "move_output": y_move_train,
+            "move_x_output": y_move_x_train,
+            "move_o_output": y_move_o_train,
         },
         epochs=epochs,
         batch_size=batch_size,
@@ -487,7 +547,8 @@ def train_model(
             {
                 "reward_x_output": y_reward_x_test,
                 "reward_o_output": y_reward_o_test,
-                "move_output": y_move_test,
+                "move_x_output": y_move_x_test,
+                "move_o_output": y_move_o_test,
             },
         ),
         callbacks=[test_accuracy_callback, checkpoint_callback],
@@ -514,7 +575,10 @@ def predict_next_move(model, game):
         {"board_input": board_sequence, "player_input": player_sequence},
         verbose=0,
     )
-    move_probabilities = predictions[2][0]
+    if game.current_player == 1:
+        move_probabilities = predictions[2][0]
+    else:
+        move_probabilities = predictions[3][0]
 
     # Mask out invalid moves
     for i in range(9):
@@ -652,7 +716,9 @@ def inspect_data(data: list[TrainingSequence]):
 
     i = 0
     for example in selected_sequence.examples:
-        if np.all(example.move_one_hot == 0):
+        if np.all(example.move_x_one_hot == 0) and np.all(
+            example.move_o_one_hot == 0
+        ):
             continue
 
         i += 1
@@ -665,7 +731,11 @@ def inspect_data(data: list[TrainingSequence]):
         print(board_state)
 
         # Extract the row and column from the one-hot encoded move
-        move_index = np.argmax(example.move_one_hot)
+        if np.all(example.move_o_one_hot == 0):
+            move_index = np.argmax(example.move_x_one_hot)
+        else:
+            move_index = np.argmax(example.move_o_one_hot)
+
         row = move_index // 3
         col = move_index % 3
 
@@ -734,6 +804,12 @@ def main():
         default="trained_model.keras",
         help="Output file for trained model",
     )
+    train_parser.add_argument(
+        "--dropout_rate",
+        type=float,
+        default=0.1,
+        help="Dropout rate for the model",
+    )
 
     # Inspect Data Subparser
     inspect_parser = subparsers.add_parser(
@@ -779,7 +855,9 @@ def main():
         if args.resume_model:
             model = load_model(os.path.join(args.data_dir, args.resume_model))
         else:
-            model = create_transformer_model()
+            model = create_transformer_model(
+                dropout_rate=args.dropout_rate,
+            )
 
         output_path = os.path.join(args.data_dir, args.output_model)
         checkpoint_callback = CheckpointCallback(output_path)
@@ -787,7 +865,7 @@ def main():
         try:
             model = train_model(
                 model,
-                training_data,
+                training_data[:100],
                 checkpoint_callback,
                 epochs=args.epochs,
                 batch_size=args.batch_size,
