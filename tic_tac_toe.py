@@ -1,7 +1,7 @@
 import argparse
 import os
 import pickle
-import random, itertools
+import random
 from dataclasses import dataclass
 from typing import List
 
@@ -352,15 +352,7 @@ class TestAccuracyCallback(Callback):
         # Reshape y_move_train and y_move_test to be flat for the move output
         reshaped_y_move_test = self.y_move_test[:, -1, :]
 
-        (
-            loss,
-            reward_x_loss,
-            reward_o_loss,
-            move_loss,
-            move_accuracy,
-            reward_x_mse,
-            reward_o_mse,
-        ) = self.model.evaluate(
+        results = self.model.evaluate(
             {
                 "board_input": self.X_board_input_test,
                 "player_input": self.X_player_input_test,
@@ -371,22 +363,26 @@ class TestAccuracyCallback(Callback):
                 "move_output": reshaped_y_move_test,
             },
             verbose=0,
+            return_dict=True,
         )
+
         print()
         print()
         print(f"Epoch {epoch+1}:")
-        print(f"  Loss: {loss:.4f}")
-        print(f"  Reward X Loss: {reward_x_loss:.4f}")
-        print(f"  Reward O Loss: {reward_o_loss:.4f}")
-        print(f"  Move Loss: {move_loss:.4f}")
-        print(f"  Reward X MSE: {reward_x_mse:.4f}")
-        print(f"  Reward O MSE: {reward_o_mse:.4f}")
-        print(f"  Move Accuracy: {move_accuracy:.4f}")
+        print(f"  Loss: {results['loss']:.4f}")
+        print(f"  Reward X Loss: {results['reward_x_output_loss']:.4f}")
+        print(f"  Reward O Loss: {results['reward_o_output_loss']:.4f}")
+        print(f"  Move Loss: {results['move_output_loss']:.4f}")
+        print(f"  Reward X MSE: {results['reward_x_output_mse']:.4f}")
+        print(f"  Reward O MSE: {results['reward_o_output_mse']:.4f}")
+        print(f"  Move Accuracy: {results['move_output_accuracy']:.4f}")
         print()
         print()
 
 
-def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
+def train_model(
+    model, data, checkpoint_callback, epochs=10, batch_size=32, test_size=0.01
+):
     X_board = np.array(
         [
             np.array(
@@ -494,7 +490,7 @@ def train_model(model, data, epochs=10, batch_size=32, test_size=0.01):
                 "move_output": y_move_test,
             },
         ),
-        callbacks=[test_accuracy_callback],
+        callbacks=[test_accuracy_callback, checkpoint_callback],
     )
     return model
 
@@ -542,6 +538,29 @@ def predict_next_move(model, game):
     # Choose the move with the highest probability
     move_index = np.argmax(move_probabilities)
     return move_index // 3, move_index % 3
+
+
+class CheckpointCallback(Callback):
+    def __init__(self, model_path):
+        super().__init__()
+        self.model_path = model_path
+
+    def on_epoch_end(self, epoch, logs=None):
+        try:
+            self.model.save(self.model_path)
+            print(
+                f"\nModel checkpoint saved to {self.model_path} after epoch {epoch+1}"
+            )
+        except Exception as e:
+            print(f"Error saving model checkpoint: {e}")
+
+    def on_train_end(self, logs=None):
+        print("\nTraining finished. Saving model...")
+        try:
+            self.model.save(self.model_path)
+            print(f"Model saved to {self.model_path}")
+        except Exception as e:
+            print(f"Error saving model: {e}")
 
 
 def play_game(model, human_player):
@@ -604,7 +623,7 @@ def load_data(filename):
     return data
 
 
-def one_hot_to_board(board_state_one_hot):
+def one_hot_to_board(board_state_one_hot: np.ndarray):
     board_state = np.zeros((3, 3), dtype=int)
     for r in range(3):
         for c in range(3):
@@ -698,6 +717,12 @@ def main():
         help="Input file for training data",
     )
     train_parser.add_argument(
+        "--resume_model",
+        type=str,
+        default=None,
+        help="Model file to resume training from",
+    )
+    train_parser.add_argument(
         "--epochs", type=int, default=3, help="Number of training epochs"
     )
     train_parser.add_argument(
@@ -751,26 +776,36 @@ def main():
         print("Training model...")
         input_path = os.path.join(args.data_dir, args.input_file)
         training_data = load_data(input_path)
-        model = create_transformer_model()
-        model = train_model(
-            model,
-            training_data,
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-        )
+        if args.resume_model:
+            model = load_model(os.path.join(args.data_dir, args.resume_model))
+        else:
+            model = create_transformer_model()
+
         output_path = os.path.join(args.data_dir, args.output_model)
-        save_model(model, output_path)
+        checkpoint_callback = CheckpointCallback(output_path)
+
+        try:
+            model = train_model(
+                model,
+                training_data,
+                checkpoint_callback,
+                epochs=args.epochs,
+                batch_size=args.batch_size,
+            )
+        except KeyboardInterrupt:
+            print("\nTraining interrupted by user.")
+            exit(0)
 
     elif args.command == "inspect":
         print("Inspecting data...")
         input_path = os.path.join(args.data_dir, args.input_file)
         training_data = load_data(input_path)
         inspect_data(training_data)
+
     elif args.command == "play":
         print("Playing game...")
         model_path = os.path.join(args.data_dir, args.model_file)
         model = load_model(model_path)
-        optimize_for_win = True
         play_game(model, args.human_player)
 
     else:
