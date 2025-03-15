@@ -198,20 +198,11 @@ def create_training_examples(game):
     for i in range(len(all_examples)):
         subsequence = all_examples[: i + 1]
         pad_examples(subsequence)
-
-        if i == len(all_examples) - 1:
-            # Reward is only assigned on the last play
-            current_reward_x = reward_x
-            current_reward_o = reward_o
-        else:
-            current_reward_x = 0.0
-            current_reward_o = 0.0
-
         result.append(
             TrainingSequence(
                 examples=subsequence,
-                reward_x=current_reward_x,
-                reward_o=current_reward_o,
+                reward_x=reward_x,
+                reward_o=reward_o,
             )
         )
 
@@ -253,7 +244,7 @@ def generate_training_data():
 def create_transformer_model(
     sequence_length=CONTEXT_WINDOW,
     embedding_dim=128,
-    num_heads=4,
+    num_heads=2,
     ff_dim=32,
     num_transformer_blocks=2,
 ):
@@ -475,7 +466,7 @@ def train_model(
         random_state=42,
     )
 
-    learning_rate = 0.0001
+    learning_rate = 0.0005
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
