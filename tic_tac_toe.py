@@ -486,7 +486,7 @@ def train_model(
         random_state=42,
     )
 
-    learning_rate = 0.00001
+    learning_rate = 0.0001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
@@ -498,10 +498,10 @@ def train_model(
             "move_o_output": "categorical_crossentropy",
         },
         loss_weights={
-            "reward_x_output": 0.1,
-            "reward_o_output": 0.1,
-            "move_x_output": 0.4,
-            "move_o_output": 0.4,
+            "reward_x_output": 0.25,
+            "reward_o_output": 0.25,
+            "move_x_output": 0.25,
+            "move_o_output": 0.25,
         },
         metrics={
             "reward_x_output": "mse",
