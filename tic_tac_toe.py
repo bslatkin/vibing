@@ -486,7 +486,7 @@ def train_model(
         random_state=42,
     )
 
-    learning_rate = 0.0001
+    learning_rate = 0.00005
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
@@ -865,7 +865,7 @@ def main():
         try:
             model = train_model(
                 model,
-                training_data[:100],
+                training_data,
                 checkpoint_callback,
                 epochs=args.epochs,
                 batch_size=args.batch_size,
