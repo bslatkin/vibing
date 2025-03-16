@@ -240,9 +240,6 @@ def generate_training_data():
 
     data = []
     for child in iterate_games(game):
-        if random.randint(0, 10000000) % 1000 != 0:
-            continue
-
         data.extend(create_training_examples(child))
 
         if data and len(data) % 100_000 == 0:
