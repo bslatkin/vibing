@@ -215,7 +215,43 @@ def one_hot_to_move(move_index):
 
 
 def create_model():
-    pass
+    """Creates an MLP model for Tic-Tac-Toe with a single move output."""
+    board_input = keras.Input(
+        shape=(3, 3, 3),
+        name="board_input",
+    )
+
+    # Flatten the board states
+    x = layers.Flatten()(board_input)
+
+    # Hidden layers
+    x = layers.Dense(128, activation="relu")(x)
+    x = layers.Dense(64, activation="relu")(x)
+
+    # Reward branch
+    reward_output = layers.Dense(
+        1,
+        activation="tanh",
+        name="reward_output",
+    )(x)
+
+    # Move branch
+    move_output = layers.Dense(
+        9,
+        activation="softmax",
+        name="move_output",
+    )(x)
+
+    model = keras.Model(
+        inputs={
+            "board_input": board_input,
+        },
+        outputs=[
+            reward_output,
+            move_output,
+        ],
+    )
+    return model
 
 
 class TestAccuracyCallback(Callback):
@@ -232,16 +268,13 @@ class TestAccuracyCallback(Callback):
         self.test_set_size = len(X_board_input_test)
 
     def on_epoch_end(self, epoch, logs=None):
-        # Reshape y_move_test to be flat for the move output
-        reshaped_y_move_test = self.y_move_test[:, -1, :]
-
         results = self.model.evaluate(
             {
                 "board_input": self.X_board_input_test,
             },
             {
                 "reward_output": self.y_reward_test,
-                "move_output": reshaped_y_move_test,
+                "move_output": self.y_move_test,
             },
             verbose=0,
             return_dict=True,
@@ -262,9 +295,8 @@ class TestAccuracyCallback(Callback):
 def train_model(
     model, data, checkpoint_callback, epochs=10, batch_size=32, test_size=0.01
 ):
-    X_board = np.array()
-
-    y_move = np.array()
+    X_board = np.array([example.board_state_one_hot for example in data])
+    y_move = np.array([example.move_one_hot for example in data])
 
     y_reward = np.array([sequence.reward for sequence in data])
 
@@ -307,9 +339,6 @@ def train_model(
         y_move_test,
     )
 
-    y_move_train = y_move_train[:, -1, :]
-    y_move_test = y_move_test[:, -1, :]
-
     model.fit(
         {
             "board_input": X_board_train,
@@ -336,21 +365,12 @@ def train_model(
 
 def predict_next_move(model, game):
     """Predicts the next move based on the current board state."""
-    all_examples_raw = extract_game_moves(game)
-
-    if game.current_player == 1:
-        all_examples = all_examples_raw[::2]
-    else:
-        all_examples = all_examples_raw[1::2]
-
-    pad_examples(all_examples)
+    board_state = game.one_hot_board()
 
     predictions = model.predict(
         {
             "board_input": np.expand_dims(
-                np.array(
-                    [example.board_state_one_hot for example in all_examples],
-                ),
+                board_state,
                 axis=0,
             ),
         },
