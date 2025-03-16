@@ -17,7 +17,6 @@ from tensorflow.keras.callbacks import Callback
 class TrainingExample:
     board_state_one_hot: np.ndarray
     move_one_hot: np.ndarray
-    last_player: int
 
 
 @dataclass
@@ -86,16 +85,16 @@ class TicTacToe:
         return np.all(self.board != 0)
 
     def one_hot_board(self):
-        """Converts a 3x3 board to a 3x3x3 one-hot tensor."""
+        """Converts a 3x3 board to a 3x3x3 one-hot tensor, from the current player's perspective."""
         one_hot_board = np.zeros((3, 3, 3), dtype=int)
         for r in range(3):
             for c in range(3):
                 if self.board[r, c] == 0:
                     one_hot_board[r, c, 0] = 1
-                elif self.board[r, c] == 1:
-                    one_hot_board[r, c, 1] = 1
-                elif self.board[r, c] == 2:
-                    one_hot_board[r, c, 2] = 1
+                elif self.board[r, c] == self.current_player:
+                    one_hot_board[r, c, 1] = 1  # My piece
+                else:
+                    one_hot_board[r, c, 2] = 1  # Opponent's piece
         return one_hot_board
 
 
@@ -128,7 +127,6 @@ def generate_all_games(game, counter):
 EMPTY_EXAMPLE = TrainingExample(
     board_state_one_hot=np.zeros((3, 3, 3)),
     move_one_hot=np.zeros(9),
-    last_player=-1,
 )
 
 
@@ -170,7 +168,6 @@ def extract_game_moves(game):
         example = TrainingExample(
             board_state_one_hot=parent.one_hot_board(),
             move_one_hot=move_one_hot,
-            last_player=0.0 if parent.current_player == 1 else 1.0,
         )
         all_examples.insert(0, example)
 
@@ -253,26 +250,13 @@ def create_transformer_model(
         shape=(sequence_length, 3, 3, 3),
         name="board_input",
     )
-    player_input = keras.Input(
-        shape=(sequence_length, 1),
-        name="player_input",
-    )
-
-    # Input: Sequence of board states
-    board_input = keras.Input(
-        shape=(sequence_length, 3, 3, 3), name="board_input"
-    )
-    player_input = keras.Input(shape=(sequence_length, 1), name="player_input")
 
     # Flatten the board states
-    board_x = layers.Reshape((sequence_length, 27))(board_input)
-    player_input_x = layers.Reshape((sequence_length, 1))(player_input)
-
-    # Concatenate board and player inputs
-    x = layers.Concatenate(axis=-1)([board_x, player_input_x])
+    x = layers.Reshape((sequence_length, 27))(board_input)
 
     # Embedding layer
     x = layers.Dense(embedding_dim, activation="relu")(x)
+
     # Positional encoding
     positional_encodings = np.zeros((sequence_length, embedding_dim))
     for pos in range(sequence_length):
@@ -324,7 +308,6 @@ def create_transformer_model(
     model = keras.Model(
         inputs={
             "board_input": board_input,
-            "player_input": player_input,
         },
         outputs=[
             reward_x_output,
@@ -366,7 +349,6 @@ class TestAccuracyCallback(Callback):
     def __init__(
         self,
         X_board_input_test,
-        X_player_input_test,
         y_reward_x_test,
         y_reward_o_test,
         y_move_test,
@@ -374,7 +356,6 @@ class TestAccuracyCallback(Callback):
     ):
         super().__init__()
         self.X_board_input_test = X_board_input_test
-        self.X_player_input_test = X_player_input_test
         self.y_reward_x_test = y_reward_x_test
         self.y_reward_o_test = y_reward_o_test
         self.y_move_test = y_move_test
@@ -388,7 +369,6 @@ class TestAccuracyCallback(Callback):
         results = self.model.evaluate(
             {
                 "board_input": self.X_board_input_test,
-                "player_input": self.X_player_input_test,
             },
             {
                 "reward_x_output": self.y_reward_x_test,
@@ -423,17 +403,6 @@ def train_model(
             for sequence in data
         ]
     )
-    X_player = np.array(
-        [
-            np.array(
-                [
-                    np.array([example.last_player])
-                    for example in sequence.examples
-                ]
-            )
-            for sequence in data
-        ]
-    )
 
     y_move = np.array(
         [
@@ -448,8 +417,6 @@ def train_model(
     (
         X_board_train,
         X_board_test,
-        X_player_train,
-        X_player_test,
         y_move_train,
         y_move_test,
         y_reward_x_train,
@@ -458,7 +425,6 @@ def train_model(
         y_reward_o_test,
     ) = train_test_split(
         X_board,
-        X_player,
         y_move,
         y_reward_x,
         y_reward_o,
@@ -488,7 +454,6 @@ def train_model(
 
     test_accuracy_callback = TestAccuracyCallback(
         X_board_test,
-        X_player_test,
         y_reward_x_test,
         y_reward_o_test,
         y_move_test,
@@ -501,7 +466,6 @@ def train_model(
     model.fit(
         {
             "board_input": X_board_train,
-            "player_input": X_player_train,
         },
         {
             "reward_x_output": y_reward_x_train,
@@ -513,7 +477,6 @@ def train_model(
         validation_data=(
             {
                 "board_input": X_board_test,
-                "player_input": X_player_test,
             },
             {
                 "reward_x_output": y_reward_x_test,
@@ -538,9 +501,6 @@ def predict_next_move(model, game):
                     [example.board_state_one_hot for example in all_examples]
                 ),
                 axis=0,
-            ),
-            "player_input": np.array(
-                [[np.array([example.last_player]) for example in all_examples]]
             ),
         },
         verbose=0,
@@ -682,9 +642,11 @@ def inspect_data(data: list[TrainingSequence]):
     print(f"Reward O: {selected_sequence.reward_o}")
 
     i = 0
+    current_player = 1
     for example in selected_sequence.examples:
         if np.all(example.move_one_hot == 0):
             continue
+
         i += 1
         print(f"\nExample {i} in sequence:")
         print("-" * 20)
@@ -700,10 +662,12 @@ def inspect_data(data: list[TrainingSequence]):
         col = move_index % 3
 
         # Print the move details
-        print(f"Player: {'O' if example.last_player == 1 else 'X'}")
+        print(f"Player: {'O' if current_player == 1 else 'X'}")
         print(f"Move:   ({row}, {col})")
 
         print("-" * 20)
+
+        current_player = 3 - current_player
 
 
 def save_model(model, filename):
