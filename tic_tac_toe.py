@@ -25,7 +25,7 @@ class TrainingSequence:
     reward: float
 
 
-CONTEXT_WINDOW = 9
+CONTEXT_WINDOW = 5
 
 
 class TicTacToe:
@@ -253,9 +253,9 @@ def generate_training_data():
 def create_transformer_model(
     sequence_length=CONTEXT_WINDOW,
     embedding_dim=128,
-    num_heads=2,
+    num_heads=4,
     ff_dim=32,
-    num_transformer_blocks=2,
+    num_transformer_blocks=4,
 ):
     """Creates a transformer model for Tic-Tac-Toe with a single move output."""
     board_input = keras.Input(
@@ -426,7 +426,7 @@ def train_model(
         random_state=42,
     )
 
-    learning_rate = 0.0005
+    learning_rate = 0.001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
