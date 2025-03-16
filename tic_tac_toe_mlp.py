@@ -193,23 +193,31 @@ def generate_training_data():
     data = []
     create_training_examples(-1, -1, game, data)
 
-    # seen_moves = set()
-    # unique_data = []
-    # for example in data:
-    #     key = (
-    #         tuple(example.board_state_one_hot.flatten()),
-    #         tuple(example.move_one_hot.flatten()),
-    #     )
-    #     if key in seen_moves:
-    #         continue
-    #     else:
-    #         seen_moves.add(key)
+    # This is like exploring a Q table to pick the best move at every state.
+    # Moves at the same board state that have the same result value (equal
+    # to the maximum) are included in the training data too.
+    best_moves = {}
+    for example in data:
+        key = tuple(example.board_state_one_hot.flatten())
 
-    #     unique_data.append(example)
+        found = best_moves.get(key)
+        if not found:
+            move_key = tuple(example.move_one_hot.flatten())
+            best_moves[key] = {move_key: example}
+        else:
+            max_reward = max(move.reward for move in found.values())
+            if example.reward > max_reward:
+                best_moves[key] = {move_key: example}
+            elif example.reward == max_reward:
+                found[move_key] = example
 
-    print(f"Finished generating examples. {len(data)} examples")
+    result = []
+    for move_dict in best_moves.values():
+        result.extend(move_dict.values())
 
-    return data
+    print(f"Finished generating examples. {len(result)} examples")
+
+    return result
 
 
 def one_hot_to_move(move_index):
@@ -218,7 +226,6 @@ def one_hot_to_move(move_index):
 
 
 def create_model(num_filters=32, kernel_size=(2, 2)):
-    """Creates a CNN model for Tic-Tac-Toe with a single move output."""
     board_input = keras.Input(
         shape=(3, 3, 3),
         name="board_input",
@@ -226,39 +233,11 @@ def create_model(num_filters=32, kernel_size=(2, 2)):
 
     l2_reg = regularizers.l2(0.00001)
 
-    # Convolutional layers
-    x = layers.Conv2D(
-        num_filters,
-        kernel_size=kernel_size,
-        activation="relu",
-        padding="same",
-        kernel_regularizer=l2_reg,
-    )(board_input)
-    x = layers.Conv2D(
-        num_filters * 2,
-        kernel_size=kernel_size,
-        activation="relu",
-        padding="same",
-        kernel_regularizer=l2_reg,
-    )(x)
-
     # Flatten for dense layers
-    x = layers.Flatten()(x)
+    x = layers.Flatten()(board_input)
 
     # Dense layers
-    x = layers.Dense(
-        4096,
-        activation="relu",
-        kernel_regularizer=l2_reg,
-    )(x)
-    x = layers.Dense(
-        4096,
-        activation="relu",
-        kernel_regularizer=l2_reg,
-    )(x)
-
-    # Reward branch
-    reward_output = layers.Dense(1, activation="tanh", name="reward_output")(x)
+    x = layers.Dense(128, activation="relu", kernel_regularizer=l2_reg)(x)
 
     # Move branch
     move_output = layers.Dense(
@@ -272,7 +251,6 @@ def create_model(num_filters=32, kernel_size=(2, 2)):
             "board_input": board_input,
         },
         outputs=[
-            reward_output,
             move_output,
         ],
     )
@@ -283,24 +261,17 @@ class TestAccuracyCallback(Callback):
     def __init__(
         self,
         X_board_input_test,
-        y_reward_test,
         y_move_test,
     ):
         super().__init__()
         self.X_board_input_test = X_board_input_test
-        self.y_reward_test = y_reward_test
         self.y_move_test = y_move_test
         self.test_set_size = len(X_board_input_test)
 
     def on_epoch_end(self, epoch, logs=None):
         results = self.model.evaluate(
-            {
-                "board_input": self.X_board_input_test,
-            },
-            {
-                "reward_output": self.y_reward_test,
-                "move_output": self.y_move_test,
-            },
+            self.X_board_input_test,
+            self.y_move_test,
             verbose=0,
             return_dict=True,
         )
@@ -310,9 +281,7 @@ class TestAccuracyCallback(Callback):
         print(f"Epoch {epoch+1}:")
         print(f"  Test set size: {self.test_set_size}")
         print(f"  Loss: {results['loss']:.4f}")
-        print(f"  Reward Loss: {results['reward_output_loss']:.4f}")
-        print(f"  Move Loss: {results['move_output_loss']:.4f}")
-        print(f"  Move Accuracy: {results['move_output_accuracy']:.4f}")
+        print(f"  Accuracy: {results['accuracy']:.4f}")
         print()
         print()
 
@@ -323,19 +292,14 @@ def train_model(
     X_board = np.array([example.board_state_one_hot for example in data])
     y_move = np.array([example.move_one_hot for example in data])
 
-    y_reward = np.array([sequence.reward for sequence in data])
-
     (
         X_board_train,
         X_board_test,
         y_move_train,
         y_move_test,
-        y_reward_train,
-        y_reward_test,
     ) = train_test_split(
         X_board,
         y_move,
-        y_reward,
         test_size=test_size,
         random_state=42,
     )
@@ -346,12 +310,10 @@ def train_model(
     model.compile(
         optimizer=optimizer,
         loss={
-            "reward_output": "mse",
             "move_output": "categorical_crossentropy",
         },
         loss_weights={
-            "reward_output": 0.5,
-            "move_output": 0.5,
+            "move_output": 1.0,
         },
         metrics={
             "move_output": "accuracy",
@@ -360,29 +322,15 @@ def train_model(
 
     test_accuracy_callback = TestAccuracyCallback(
         X_board_test,
-        y_reward_test,
         y_move_test,
     )
 
     model.fit(
-        {
-            "board_input": X_board_train,
-        },
-        {
-            "reward_output": y_reward_train,
-            "move_output": y_move_train,
-        },
+        X_board_train,
+        y_move_train,
         epochs=epochs,
         batch_size=batch_size,
-        validation_data=(
-            {
-                "board_input": X_board_test,
-            },
-            {
-                "reward_output": y_reward_test,
-                "move_output": y_move_test,
-            },
-        ),
+        validation_data=(X_board_test, y_move_test),
         callbacks=[test_accuracy_callback, checkpoint_callback],
     )
     return model
@@ -401,7 +349,7 @@ def predict_next_move(model, game):
         },
         verbose=0,
     )
-    move_probabilities = predictions[1][0]
+    move_probabilities = predictions[0][0]
 
     # Mask out invalid moves
     for i in range(9):
