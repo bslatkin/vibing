@@ -217,32 +217,48 @@ def one_hot_to_move(move_index):
     return move_index // 3, move_index % 3
 
 
-def create_model():
-    """Creates an MLP model for Tic-Tac-Toe with a single move output."""
+def create_model(num_filters=32, kernel_size=(2, 2)):
+    """Creates a CNN model for Tic-Tac-Toe with a single move output."""
     board_input = keras.Input(
         shape=(3, 3, 3),
         name="board_input",
     )
 
-    # Flatten the board states
-    x = layers.Flatten()(board_input)
-
-    # L2 regularization
     l2_reg = regularizers.l2(0.00001)
 
-    # Hidden layers
-    x = layers.Dense(4096, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(4096, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(4096, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(4096, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(4096, activation="relu", kernel_regularizer=l2_reg)(x)
+    # Convolutional layers
+    x = layers.Conv2D(
+        num_filters,
+        kernel_size=kernel_size,
+        activation="relu",
+        padding="same",
+        kernel_regularizer=l2_reg,
+    )(board_input)
+    x = layers.Conv2D(
+        num_filters * 2,
+        kernel_size=kernel_size,
+        activation="relu",
+        padding="same",
+        kernel_regularizer=l2_reg,
+    )(x)
+
+    # Flatten for dense layers
+    x = layers.Flatten()(x)
+
+    # Dense layers
+    x = layers.Dense(
+        4096,
+        activation="relu",
+        kernel_regularizer=l2_reg,
+    )(x)
+    x = layers.Dense(
+        4096,
+        activation="relu",
+        kernel_regularizer=l2_reg,
+    )(x)
 
     # Reward branch
-    reward_output = layers.Dense(
-        1,
-        activation="tanh",
-        name="reward_output",
-    )(x)
+    reward_output = layers.Dense(1, activation="tanh", name="reward_output")(x)
 
     # Move branch
     move_output = layers.Dense(
