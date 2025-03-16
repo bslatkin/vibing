@@ -194,16 +194,20 @@ def create_training_examples(game):
     for current_player in (1, 2):
         for i in range(len(all_examples)):
             if current_player == 1:
-                subsequence = all_examples[::2]
+                # subsequence = all_examples[::2]
+                # XXX: Just training a model that can play as "O"
+                continue
             else:
                 subsequence = all_examples[1::2]
 
             pad_examples(subsequence)
 
-            if i != (len(all_examples) - 1):
-                # Delayed reward, so only the last example gets a reward.
-                reward = 0.0
-            elif current_player == 1:
+            # XXX reward the whole time based on anticipated outcome
+            # if i != (len(all_examples) - 1):
+            #     # Delayed reward, so only the last example gets a reward.
+            #     reward = 0.0
+            if current_player == 1:
+                assert False, "Should not happen, O-only model"
                 reward = reward_x
             else:
                 reward = reward_o
@@ -253,9 +257,9 @@ def generate_training_data():
 def create_transformer_model(
     sequence_length=CONTEXT_WINDOW,
     embedding_dim=128,
-    num_heads=4,
+    num_heads=2,
     ff_dim=32,
-    num_transformer_blocks=4,
+    num_transformer_blocks=2,
 ):
     """Creates a transformer model for Tic-Tac-Toe with a single move output."""
     board_input = keras.Input(

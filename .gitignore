@@ -1,2 +1,1 @@
-data/training_data.pkl
-data/trained_model.keras
+data/*
