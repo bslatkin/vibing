@@ -22,9 +22,13 @@ class TrainingExample:
 class TicTacToe:
     def __init__(self):
         self.board = np.zeros((3, 3), dtype=int)
+        self.last_player = -1
         self.current_player = 1  # Player X starts
         self.parent_board = None
         self.child_boards = {}  # Map (row, col) of the play to the child board
+        self.child_wins = 0
+        self.child_losses = 0
+        self.child_draws = 0
 
     def is_valid_move(self, row, col):
         return 0 <= row < 3 and 0 <= col < 3 and self.board[row, col] == 0
@@ -40,9 +44,14 @@ class TicTacToe:
         child.board[row, col] = self.current_player
 
         if self.current_player == 1:
+            child.last_player = 1
             child.current_player = 2
         else:
+            child.last_player = 2
             child.current_player = 1
+
+        if child.check_winner() != 0:
+            child.winning_move = True
 
         return child
 
@@ -112,60 +121,77 @@ def generate_all_games(game, counter):
         generate_all_games(new_game, counter)
 
 
-def create_training_examples(game):
-    all_examples = extract_game_moves(game)
-
+def count_outcomes(game):
+    assert game.parent_board
     winner = game.check_winner()
-    if winner == 1:
-        reward_x = 1.0
-        reward_o = -1.0
-    elif winner == 2:
-        reward_x = -1.0
-        reward_o = 1.0
+
+    if winner == game.last_player:
+        game.parent_board.child_wins += 1
+    elif winner != 0:
+        game.parent_board.child_losses += 1
     else:
-        reward_x = 0.0
-        reward_o = 0.0
+        assert game.is_board_full()
+        game.parent_board.child_draws += 1
 
-    result = []
 
-    for current_player in (1, 2):
-        for i in range(len(all_examples)):
-            if current_player == 1:
-                # subsequence = all_examples[::2]
-                # XXX: Just training a model that can play as "O"
-                continue
-            else:
-                subsequence = all_examples[1::2]
+def calculate_reward(game):
+    winner = game.check_winner()
 
-            pad_examples(subsequence)
+    if winner == game.last_player:
+        return 1.0
+    elif winner != 0:
+        return -1.0
+    elif game.is_board_full():
+        return 0.0
+    else:
+        assert game.child_boards
 
-            # XXX reward the whole time based on anticipated outcome
-            # if i != (len(all_examples) - 1):
-            #     # Delayed reward, so only the last example gets a reward.
-            #     reward = 0.0
-            if current_player == 1:
-                assert False, "Should not happen, O-only model"
-                reward = reward_x
-            else:
-                reward = reward_o
+        # If any of the children have immediate outcomes, then we know
+        # the win probability of this specific move.
+        denom = game.child_wins + game.child_losses + game.child_draws
+        if denom:
+            return game.child_wins / denom
 
-            result.append(
-                TrainingSequence(
-                    examples=subsequence,
-                    reward=reward,
-                )
+        # Otherwise, recursively calculate the win probability of all the
+        # children to decide this move's probability.
+        total = 0.0
+        count = 0
+        for child in game.child_boards.values():
+            total += calculate_reward(child)
+            count += 1
+
+        assert count
+        return total / count
+
+
+def create_training_examples(row, col, game, data):
+    if row != -1 and col != -1:
+        move_one_hot = np.zeros(9, dtype=int)
+        move_one_hot[row * 3 + col] = 1
+
+        reward = calculate_reward(game)
+
+        data.append(
+            TrainingExample(
+                board_state_one_hot=game.parent_board.one_hot_board(),
+                move_one_hot=move_one_hot,
+                reward=reward,
             )
+        )
+        if data and len(data) % 100_000 == 0:
+            print(f"Generated {len(data)} examples")
 
-    return result
+    for (child_row, child_col), child in game.child_boards.items():
+        create_training_examples(child_row, child_col, child, data)
 
 
-def iterate_games(game):
+def iterate_leaf_games(game):
     for child in game.child_boards.values():
         if child.check_winner() != 0 or child.is_board_full():
             # Only yield leaf games that are complete
             yield child
         else:
-            yield from iterate_games(child)
+            yield from iterate_leaf_games(child)
 
 
 def generate_training_data():
@@ -179,12 +205,11 @@ def generate_training_data():
     generate_all_games(game, counter)
     print(f"Finished generating data. {counter[0]} games")
 
-    data = []
-    for child in iterate_games(game):
-        data.extend(create_training_examples(child))
+    for child in iterate_leaf_games(game):
+        count_outcomes(child)
 
-        if data and len(data) % 100_000 == 0:
-            print(f"Generated {len(data)} examples")
+    data = []
+    create_training_examples(-1, -1, game, data)
 
     print(f"Finished generating examples. {len(data)} examples")
 
@@ -460,8 +485,8 @@ def one_hot_to_board(board_state_one_hot: np.ndarray):
     return board_state
 
 
-def inspect_data(data: list[TrainingSequence]):
-    """Inspects the generated test data and prints out a sequence of moves."""
+def inspect_data(data):
+    """Inspects the generated test data and prints out a move."""
     if not data:
         print("No data to inspect.")
         return
