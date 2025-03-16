@@ -194,23 +194,23 @@ def generate_training_data():
     data = []
     create_training_examples(-1, -1, game, data)
 
-    seen_moves = set()
-    unique_data = []
-    for example in data:
-        key = (
-            tuple(example.board_state_one_hot.flatten()),
-            tuple(example.move_one_hot.flatten()),
-        )
-        if key in seen_moves:
-            continue
-        else:
-            seen_moves.add(key)
+    # seen_moves = set()
+    # unique_data = []
+    # for example in data:
+    #     key = (
+    #         tuple(example.board_state_one_hot.flatten()),
+    #         tuple(example.move_one_hot.flatten()),
+    #     )
+    #     if key in seen_moves:
+    #         continue
+    #     else:
+    #         seen_moves.add(key)
 
-        unique_data.append(example)
+    #     unique_data.append(example)
 
-    print(f"Finished generating examples. {len(unique_data)} unique examples")
+    print(f"Finished generating examples. {len(data)} examples")
 
-    return unique_data
+    return data
 
 
 def one_hot_to_move(move_index):
@@ -232,6 +232,8 @@ def create_model():
     l2_reg = regularizers.l2(0.001)
 
     # Hidden layers
+    x = layers.Dense(1024, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(512, activation="relu", kernel_regularizer=l2_reg)(x)
     x = layers.Dense(256, activation="relu", kernel_regularizer=l2_reg)(x)
 
     # Reward branch
