@@ -213,7 +213,10 @@ def generate_training_data():
 
     result = []
     for move_dict in best_moves.values():
-        result.extend(move_dict.values())
+        # XXX Keeping equivalent moves for the same starting board seems
+        # to confuse the model. Instead just pick one.
+        # result.extend(move_dict.values())
+        result.append(next(iter(move_dict.values())))
 
     print(f"Finished generating examples. {len(result)} examples")
 
@@ -231,16 +234,11 @@ def create_model(num_filters=32, kernel_size=(2, 2)):
         name="board_input",
     )
 
-    l2_reg = regularizers.l2(0.00001)
-
     # Flatten for dense layers
     x = layers.Flatten()(board_input)
 
     # Dense layers
-    x = layers.Dense(16384, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(8192, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(2048, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(512, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(256, activation="relu")(x)
 
     # Move branch
     move_output = layers.Dense(
@@ -303,7 +301,7 @@ def train_model(
         random_state=42,
     )
 
-    learning_rate = 0.0001
+    learning_rate = 0.001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
