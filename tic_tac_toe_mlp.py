@@ -27,8 +27,6 @@ class TicTacToe:
         self.parent_board = None
         self.child_boards = {}  # Map (row, col) of the play to the child board
         self.child_wins = 0
-        self.child_losses = 0
-        self.child_draws = 0
 
     def is_valid_move(self, row, col):
         return 0 <= row < 3 and 0 <= col < 3 and self.board[row, col] == 0
@@ -97,12 +95,6 @@ class TicTacToe:
         return one_hot_board
 
 
-def probability_mean(values_iter):
-    values = list(values_iter)
-    total = sum(values)
-    return total / len(values)
-
-
 def generate_all_games(game, counter):
     winner = game.check_winner()
     if winner != 0 or game.is_board_full():
@@ -123,15 +115,8 @@ def generate_all_games(game, counter):
 
 def count_outcomes(game):
     assert game.parent_board
-    winner = game.check_winner()
-
-    if winner == game.last_player:
+    if game.check_winner() == game.last_player:
         game.parent_board.child_wins += 1
-    elif winner != 0:
-        game.parent_board.child_losses += 1
-    else:
-        assert game.is_board_full()
-        game.parent_board.child_draws += 1
 
 
 def calculate_reward(game):
@@ -141,24 +126,29 @@ def calculate_reward(game):
         return 1.0
     elif game.is_board_full():
         return 0.0
-    else:
-        assert game.child_boards
-
+    elif game.child_wins:
         # If this game has any immediate wins, then that means the previous
         # player blew it with their last move.
-        if game.child_wins:
-            return -1.0
+        return -1.0
+    else:
+        # Calculate the average reward of all the children's children,
+        # skipping the current player's turn.
+        total_reward = 0.0
+        count = 0
+        for child in game.child_boards.values():
+            for grand_child in child.child_boards.values():
+                total_reward += calculate_reward(grand_child)
+                count += 1
 
-        # If this game has any immediate loses, then this could be a good
-        # move to make.
-        if game.child_losses:
-            return 0.5
-
-        return 0.0
+        if count:
+            return total_reward / count
+        else:
+            return 0.0
 
 
 def create_training_examples(row, col, game, data):
-    if row != -1 and col != -1:
+    # XXX only O move examples
+    if row != -1 and col != -1 and game.last_player == 2:
         move_one_hot = np.zeros(9, dtype=int)
         move_one_hot[row * 3 + col] = 1
 
@@ -204,9 +194,23 @@ def generate_training_data():
     data = []
     create_training_examples(-1, -1, game, data)
 
-    print(f"Finished generating examples. {len(data)} examples")
+    seen_moves = set()
+    unique_data = []
+    for example in data:
+        key = (
+            tuple(example.board_state_one_hot.flatten()),
+            tuple(example.move_one_hot.flatten()),
+        )
+        if key in seen_moves:
+            continue
+        else:
+            seen_moves.add(key)
 
-    return data
+        unique_data.append(example)
+
+    print(f"Finished generating examples. {len(unique_data)} unique examples")
+
+    return unique_data
 
 
 def one_hot_to_move(move_index):
@@ -228,10 +232,6 @@ def create_model():
     l2_reg = regularizers.l2(0.001)
 
     # Hidden layers
-    x = layers.Dense(2048, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(2048, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(1024, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(512, activation="relu", kernel_regularizer=l2_reg)(x)
     x = layers.Dense(256, activation="relu", kernel_regularizer=l2_reg)(x)
 
     # Reward branch
@@ -321,7 +321,7 @@ def train_model(
         random_state=42,
     )
 
-    learning_rate = 0.001
+    learning_rate = 0.0001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
@@ -514,24 +514,27 @@ def inspect_data(data: list[TrainingExample]):
     selected_example_index = random.randint(0, len(data) - 1)
     selected_example = data[selected_example_index]
 
-    print(f"Inspecting example {selected_example_index}:")
-    print(f"Reward: {selected_example.reward}")
+    matching_examples = []
+    for example in data:
+        if np.all(
+            example.board_state_one_hot == selected_example.board_state_one_hot
+        ):
+            matching_examples.append(example)
 
-    print("-" * 20)
+    for i, example in enumerate(matching_examples):
+        print(f"Inspecting example {i+1}:")
+        print(f"Reward: {example.reward}")
 
-    # Print the board state
-    print("Board State (0=empty, 1=Me, 2=Opponent):")
-    board_state = one_hot_to_board(selected_example.board_state_one_hot)
-    print(board_state)
+        move_index = np.argmax(example.move_one_hot)
+        row = move_index // 3
+        col = move_index % 3
+        print(f"Move:   ({row}, {col})")
 
-    # Extract the row and column from the one-hot encoded move
-    move_index = np.argmax(selected_example.move_one_hot)
-    row = move_index // 3
-    col = move_index % 3
+        print("Board State (0=empty, 1=Me, 2=Opponent):")
+        board_state = one_hot_to_board(example.board_state_one_hot)
+        print(board_state)
 
-    # Print the move details
-    print(f"Move:   ({row}, {col})")
-    print("-" * 20)
+        print("-" * 20)
 
 
 def save_model(model, filename):
