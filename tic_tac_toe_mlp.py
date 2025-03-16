@@ -237,7 +237,10 @@ def create_model(num_filters=32, kernel_size=(2, 2)):
     x = layers.Flatten()(board_input)
 
     # Dense layers
-    x = layers.Dense(128, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(16384, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(8192, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(2048, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(512, activation="relu", kernel_regularizer=l2_reg)(x)
 
     # Move branch
     move_output = layers.Dense(
@@ -247,12 +250,8 @@ def create_model(num_filters=32, kernel_size=(2, 2)):
     )(x)
 
     model = keras.Model(
-        inputs={
-            "board_input": board_input,
-        },
-        outputs=[
-            move_output,
-        ],
+        inputs=board_input,
+        outputs=move_output,
     )
     return model
 
@@ -341,15 +340,13 @@ def predict_next_move(model, game):
     board_state = game.one_hot_board()
 
     predictions = model.predict(
-        {
-            "board_input": np.expand_dims(
-                board_state,
-                axis=0,
-            ),
-        },
+        np.expand_dims(
+            board_state,
+            axis=0,
+        ),
         verbose=0,
     )
-    move_probabilities = predictions[0][0]
+    move_probabilities = predictions[0]
 
     # Mask out invalid moves
     for i in range(9):
