@@ -224,9 +224,15 @@ def create_model():
     # Flatten the board states
     x = layers.Flatten()(board_input)
 
+    # L2 regularization
+    l2_reg = regularizers.l2(0.001)
+
     # Hidden layers
-    x = layers.Dense(128, activation="relu")(x)
-    x = layers.Dense(64, activation="relu")(x)
+    x = layers.Dense(2048, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(2048, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(1024, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(512, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(256, activation="relu", kernel_regularizer=l2_reg)(x)
 
     # Reward branch
     reward_output = layers.Dense(
