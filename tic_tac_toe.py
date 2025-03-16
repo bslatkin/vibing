@@ -22,8 +22,7 @@ class TrainingExample:
 @dataclass
 class TrainingSequence:
     examples: list[TrainingExample]
-    reward_x: float
-    reward_o: float
+    reward: float
 
 
 CONTEXT_WINDOW = 9
@@ -192,16 +191,29 @@ def create_training_examples(game):
 
     result = []
 
-    for i in range(len(all_examples)):
-        subsequence = all_examples[: i + 1]
-        pad_examples(subsequence)
-        result.append(
-            TrainingSequence(
-                examples=subsequence,
-                reward_x=reward_x,
-                reward_o=reward_o,
+    for current_player in (1, 2):
+        for i in range(len(all_examples)):
+            if current_player == 1:
+                subsequence = all_examples[::2]
+            else:
+                subsequence = all_examples[1::2]
+
+            pad_examples(subsequence)
+
+            if i != (len(all_examples) - 1):
+                # Delayed reward, so only the last example gets a reward.
+                reward = 0.0
+            elif current_player == 1:
+                reward = reward_x
+            else:
+                reward = reward_o
+
+            result.append(
+                TrainingSequence(
+                    examples=subsequence,
+                    reward=reward,
+                )
             )
-        )
 
     return result
 
@@ -228,6 +240,9 @@ def generate_training_data():
 
     data = []
     for child in iterate_games(game):
+        if random.randint(0, 10000000) % 1000 != 0:
+            continue
+
         data.extend(create_training_examples(child))
 
         if data and len(data) % 100_000 == 0:
@@ -279,23 +294,14 @@ def create_transformer_model(
             ff_dim,
         )
 
-    # Reward branch for X
-    reward_x_branch = layers.GlobalAveragePooling1D()(x)
-    reward_x_branch = layers.Dense(128, activation="relu")(reward_x_branch)
-    reward_x_output = layers.Dense(
-        1,
-        activation="tanh",
-        name="reward_x_output",
-    )(reward_x_branch)
-
     # Reward branch for O
-    reward_o_branch = layers.GlobalAveragePooling1D()(x)
-    reward_o_branch = layers.Dense(128, activation="relu")(reward_o_branch)
-    reward_o_output = layers.Dense(
+    reward_branch = layers.GlobalAveragePooling1D()(x)
+    reward_branch = layers.Dense(128, activation="relu")(reward_branch)
+    reward_output = layers.Dense(
         1,
         activation="tanh",
-        name="reward_o_output",
-    )(reward_o_branch)
+        name="reward_output",
+    )(reward_branch)
 
     # Unified Move branch
     move_branch = x[:, -1, :]  # Take the last vector in the sequence
@@ -310,8 +316,7 @@ def create_transformer_model(
             "board_input": board_input,
         },
         outputs=[
-            reward_x_output,
-            reward_o_output,
+            reward_output,
             move_output,
         ],
     )
@@ -349,15 +354,13 @@ class TestAccuracyCallback(Callback):
     def __init__(
         self,
         X_board_input_test,
-        y_reward_x_test,
-        y_reward_o_test,
+        y_reward_test,
         y_move_test,
         sequence_length,
     ):
         super().__init__()
         self.X_board_input_test = X_board_input_test
-        self.y_reward_x_test = y_reward_x_test
-        self.y_reward_o_test = y_reward_o_test
+        self.y_reward_test = y_reward_test
         self.y_move_test = y_move_test
         self.sequence_length = sequence_length
         self.test_set_size = len(X_board_input_test)
@@ -371,8 +374,7 @@ class TestAccuracyCallback(Callback):
                 "board_input": self.X_board_input_test,
             },
             {
-                "reward_x_output": self.y_reward_x_test,
-                "reward_o_output": self.y_reward_o_test,
+                "reward_output": self.y_reward_test,
                 "move_output": reshaped_y_move_test,
             },
             verbose=0,
@@ -384,8 +386,7 @@ class TestAccuracyCallback(Callback):
         print(f"Epoch {epoch+1}:")
         print(f"  Test set size: {self.test_set_size}")
         print(f"  Loss: {results['loss']:.4f}")
-        print(f"  Reward X Loss: {results['reward_x_output_loss']:.4f}")
-        print(f"  Reward O Loss: {results['reward_o_output_loss']:.4f}")
+        print(f"  Reward Loss: {results['reward_output_loss']:.4f}")
         print(f"  Move Loss: {results['move_output_loss']:.4f}")
         print(f"  Move Accuracy: {results['move_output_accuracy']:.4f}")
         print()
@@ -411,23 +412,19 @@ def train_model(
         ]
     )
 
-    y_reward_x = np.array([sequence.reward_x for sequence in data])
-    y_reward_o = np.array([sequence.reward_o for sequence in data])
+    y_reward = np.array([sequence.reward for sequence in data])
 
     (
         X_board_train,
         X_board_test,
         y_move_train,
         y_move_test,
-        y_reward_x_train,
-        y_reward_x_test,
-        y_reward_o_train,
-        y_reward_o_test,
+        y_reward_train,
+        y_reward_test,
     ) = train_test_split(
         X_board,
         y_move,
-        y_reward_x,
-        y_reward_o,
+        y_reward,
         test_size=test_size,
         random_state=42,
     )
@@ -438,13 +435,11 @@ def train_model(
     model.compile(
         optimizer=optimizer,
         loss={
-            "reward_x_output": "mse",
-            "reward_o_output": "mse",
+            "reward_output": "mse",
             "move_output": "categorical_crossentropy",
         },
         loss_weights={
-            "reward_x_output": 0.25,
-            "reward_o_output": 0.25,
+            "reward_output": 0.5,
             "move_output": 0.5,
         },
         metrics={
@@ -454,8 +449,7 @@ def train_model(
 
     test_accuracy_callback = TestAccuracyCallback(
         X_board_test,
-        y_reward_x_test,
-        y_reward_o_test,
+        y_reward_test,
         y_move_test,
         sequence_length=CONTEXT_WINDOW,
     )
@@ -468,8 +462,7 @@ def train_model(
             "board_input": X_board_train,
         },
         {
-            "reward_x_output": y_reward_x_train,
-            "reward_o_output": y_reward_o_train,
+            "reward_output": y_reward_train,
             "move_output": y_move_train,
         },
         epochs=epochs,
@@ -479,8 +472,7 @@ def train_model(
                 "board_input": X_board_test,
             },
             {
-                "reward_x_output": y_reward_x_test,
-                "reward_o_output": y_reward_o_test,
+                "reward_output": y_reward_test,
                 "move_output": y_move_test,
             },
         ),
@@ -491,21 +483,27 @@ def train_model(
 
 def predict_next_move(model, game):
     """Predicts the next move based on the current board state."""
-    all_examples = extract_game_moves(game)
+    all_examples_raw = extract_game_moves(game)
+
+    if game.current_player == 1:
+        all_examples = all_examples_raw[::2]
+    else:
+        all_examples = all_examples_raw[1::2]
+
     pad_examples(all_examples)
 
     predictions = model.predict(
         {
             "board_input": np.expand_dims(
                 np.array(
-                    [example.board_state_one_hot for example in all_examples]
+                    [example.board_state_one_hot for example in all_examples],
                 ),
                 axis=0,
             ),
         },
         verbose=0,
     )
-    move_probabilities = predictions[2][0]
+    move_probabilities = predictions[1][0]
 
     # Mask out invalid moves
     for i in range(9):
@@ -638,11 +636,9 @@ def inspect_data(data: list[TrainingSequence]):
     selected_sequence = data[selected_example_index]
 
     print(f"Inspecting sequence {selected_example_index}:")
-    print(f"Reward X: {selected_sequence.reward_x}")
-    print(f"Reward O: {selected_sequence.reward_o}")
+    print(f"Reward: {selected_sequence.reward}")
 
     i = 0
-    current_player = 1
     for example in selected_sequence.examples:
         if np.all(example.move_one_hot == 0):
             continue
@@ -652,7 +648,7 @@ def inspect_data(data: list[TrainingSequence]):
         print("-" * 20)
 
         # Print the board state
-        print("Board State (0=empty, 1=X, 2=O):")
+        print("Board State (0=empty, 1=Me, 2=Opponent):")
         board_state = one_hot_to_board(example.board_state_one_hot)
         print(board_state)
 
@@ -662,12 +658,9 @@ def inspect_data(data: list[TrainingSequence]):
         col = move_index % 3
 
         # Print the move details
-        print(f"Player: {'O' if current_player == 1 else 'X'}")
         print(f"Move:   ({row}, {col})")
 
         print("-" * 20)
-
-        current_player = 3 - current_player
 
 
 def save_model(model, filename):
