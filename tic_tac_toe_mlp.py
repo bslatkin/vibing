@@ -139,29 +139,22 @@ def calculate_reward(game):
 
     if winner == game.last_player:
         return 1.0
-    elif winner != 0:
-        return -1.0
     elif game.is_board_full():
         return 0.0
     else:
         assert game.child_boards
 
-        # If any of the children have immediate outcomes, then we know
-        # the win probability of this specific move.
-        denom = game.child_wins + game.child_losses + game.child_draws
-        if denom:
-            return game.child_wins / denom
+        # If this game has any immediate wins, then that means the previous
+        # player blew it with their last move.
+        if game.child_wins:
+            return -1.0
 
-        # Otherwise, recursively calculate the win probability of all the
-        # children to decide this move's probability.
-        total = 0.0
-        count = 0
-        for child in game.child_boards.values():
-            total += calculate_reward(child)
-            count += 1
+        # If this game has any immediate loses, then this could be a good
+        # move to make.
+        if game.child_losses:
+            return 0.5
 
-        assert count
-        return total / count
+        return 0.0
 
 
 def create_training_examples(row, col, game, data):
@@ -485,42 +478,34 @@ def one_hot_to_board(board_state_one_hot: np.ndarray):
     return board_state
 
 
-def inspect_data(data):
-    """Inspects the generated test data and prints out a move."""
+def inspect_data(data: list[TrainingExample]):
+    """Inspects the generated test data and prints out a sequence of moves."""
     if not data:
         print("No data to inspect.")
         return
 
-    # Select a random sequence
+    # Select a random example
     selected_example_index = random.randint(0, len(data) - 1)
-    selected_sequence = data[selected_example_index]
+    selected_example = data[selected_example_index]
 
-    print(f"Inspecting sequence {selected_example_index}:")
-    print(f"Reward: {selected_sequence.reward}")
+    print(f"Inspecting example {selected_example_index}:")
+    print(f"Reward: {selected_example.reward}")
 
-    i = 0
-    for example in selected_sequence.examples:
-        if np.all(example.move_one_hot == 0):
-            continue
+    print("-" * 20)
 
-        i += 1
-        print(f"\nExample {i} in sequence:")
-        print("-" * 20)
+    # Print the board state
+    print("Board State (0=empty, 1=Me, 2=Opponent):")
+    board_state = one_hot_to_board(selected_example.board_state_one_hot)
+    print(board_state)
 
-        # Print the board state
-        print("Board State (0=empty, 1=Me, 2=Opponent):")
-        board_state = one_hot_to_board(example.board_state_one_hot)
-        print(board_state)
+    # Extract the row and column from the one-hot encoded move
+    move_index = np.argmax(selected_example.move_one_hot)
+    row = move_index // 3
+    col = move_index % 3
 
-        # Extract the row and column from the one-hot encoded move
-        move_index = np.argmax(example.move_one_hot)
-        row = move_index // 3
-        col = move_index % 3
-
-        # Print the move details
-        print(f"Move:   ({row}, {col})")
-
-        print("-" * 20)
+    # Print the move details
+    print(f"Move:   ({row}, {col})")
+    print("-" * 20)
 
 
 def save_model(model, filename):
