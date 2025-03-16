@@ -147,8 +147,7 @@ def calculate_reward(game):
 
 
 def create_training_examples(row, col, game, data):
-    # XXX only X move examples
-    if row != -1 and col != -1 and game.last_player == 1:
+    if row != -1 and col != -1:
         move_one_hot = np.zeros(9, dtype=int)
         move_one_hot[row * 3 + col] = 1
 
@@ -232,11 +231,11 @@ def create_model():
     l2_reg = regularizers.l2(0.00001)
 
     # Hidden layers
-    x = layers.Dense(2048, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(2048, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(2048, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(2048, activation="relu", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(2048, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(4096, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(4096, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(4096, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(4096, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(4096, activation="relu", kernel_regularizer=l2_reg)(x)
 
     # Reward branch
     reward_output = layers.Dense(
