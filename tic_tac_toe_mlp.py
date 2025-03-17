@@ -122,30 +122,25 @@ def calculate_reward(game):
     if winner == game.last_player:
         return 1.0
     elif game.is_board_full():
-        # Incentivize ties
-        return 0.5
+        return 0.0
     elif game.child_wins:
         # If this game has any immediate wins, then that means the previous
         # player blew it with their last move.
         return -1.0
     else:
-        assert game.child_boards
-
         # Calculate the average reward of all the children's children,
         # skipping the current player's turn.
         total_reward = 0.0
         count = 0
         for child in game.child_boards.values():
-            if not child.child_boards:
-                # Every outcome after this child is a loss
-                total_reward += -1.0
+            for grand_child in child.child_boards.values():
+                total_reward += calculate_reward(grand_child)
                 count += 1
-            else:
-                for grand_child in child.child_boards.values():
-                    total_reward += calculate_reward(grand_child)
-                    count += 1
 
-        return total_reward / count
+        if count:
+            return total_reward / count
+        else:
+            return 0.0
 
 
 def create_training_examples(row, col, game, data):
@@ -154,10 +149,6 @@ def create_training_examples(row, col, game, data):
         move_one_hot[row * 3 + col] = 1
 
         reward = calculate_reward(game)
-        if reward and game.current_player == 2:
-            # The training data is always from the perspective
-            # of the current player.
-            reward = -reward
 
         data.append(
             TrainingExample(
@@ -219,10 +210,14 @@ def generate_training_data():
 
     result = []
     for move_dict in best_moves.values():
-        for example in move_dict.values():
-            # XXX Only keep winning moves
-            if example.reward > 0.0:
-                result.append(example)
+        # Merge all of the equivalent moves into a single training example
+        # with the one-hot encoding of the good moves combined.
+        example_it = iter(move_dict.values())
+        first = next(example_it)
+        for example in example_it:
+            first.move_one_hot |= example.move_one_hot
+
+        result.append(first)
 
     print(f"Finished generating examples. {len(result)} examples")
 
@@ -241,7 +236,6 @@ def create_model():
     )
 
     x = layers.Flatten()(board_input)
-    x = layers.Dense(256, activation="relu")(x)
     x = layers.Dense(128, activation="relu")(x)
 
     move_output = layers.Dense(
@@ -304,7 +298,7 @@ def train_model(
         random_state=42,
     )
 
-    learning_rate = 0.0005
+    learning_rate = 0.00001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
@@ -466,19 +460,28 @@ def inspect_data(data: list[TrainingExample]):
     selected_example_index = random.randint(0, len(data) - 1)
     selected_example = data[selected_example_index]
 
+    # matching_examples = []
+    # for i, example in enumerate(data):
+    #     if np.all(example.board_state == selected_example.board_state):
+    #         matching_examples.append((i, example))
+
+    # target = np.array([[0, -1, 0], [0, -1, 1], [1, 1, -1]])
+    target = np.array([[1, 1, -1], [0, 0, -1], [-1, 1, 0]])
+
     matching_examples = []
     for i, example in enumerate(data):
-        if np.all(example.board_state == selected_example.board_state):
+        if np.all(example.board_state == target):
             matching_examples.append((i, example))
 
     for i, example in matching_examples:
         print(f"Inspecting example {i+1}:")
         print(f"Reward: {example.reward}")
 
-        move_index = np.argmax(example.move_one_hot)
-        row = move_index // 3
-        col = move_index % 3
-        print(f"Move:   ({row}, {col})")
+        for move_index in range(9):
+            if example.move_one_hot[move_index]:
+                row = move_index // 3
+                col = move_index % 3
+                print(f"Move:   ({row}, {col})")
 
         print("Board State (0=empty, 1=Me, -1=Opponent):")
         print(example.board_state)
