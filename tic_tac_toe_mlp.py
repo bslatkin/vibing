@@ -82,16 +82,16 @@ class TicTacToe:
         return np.all(self.board != 0)
 
     def one_hot_board(self):
-        """Converts a 3x3 board to a 3x3x3 one-hot tensor, from the current player's perspective."""
+        """Converts a 3x3 board to a 3x3x3 one-hot tensor."""
         one_hot_board = np.zeros((3, 3, 3), dtype=int)
         for r in range(3):
             for c in range(3):
                 if self.board[r, c] == 0:
                     one_hot_board[r, c, 0] = 1
-                elif self.board[r, c] == self.current_player:
-                    one_hot_board[r, c, 1] = 1  # My piece
+                elif self.board[r, c] == 1:
+                    one_hot_board[r, c, 1] = 1  # Player 1's piece
                 else:
-                    one_hot_board[r, c, 2] = 1  # Opponent's piece
+                    one_hot_board[r, c, 2] = 1  # Player 2's piece
         return one_hot_board
 
 
@@ -238,7 +238,9 @@ def create_model(num_filters=32, kernel_size=(2, 2)):
     x = layers.Flatten()(board_input)
 
     # Dense layers
-    x = layers.Dense(256, activation="relu")(x)
+    x = layers.Dense(4096, activation="relu")(x)
+    x = layers.Dense(1024, activation="relu")(x)
+    x = layers.Dense(128, activation="relu")(x)
 
     # Move branch
     move_output = layers.Dense(
@@ -301,7 +303,7 @@ def train_model(
         random_state=42,
     )
 
-    learning_rate = 0.001
+    learning_rate = 0.0001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
