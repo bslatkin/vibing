@@ -133,6 +133,9 @@ def calculate_reward(game):
         total_reward = 0.0
         count = 0
         for child in game.child_boards.values():
+            if not child.child_boards:
+                assert child.is_board_full()
+
             for grand_child in child.child_boards.values():
                 total_reward += calculate_reward(grand_child)
                 count += 1
@@ -140,6 +143,7 @@ def calculate_reward(game):
         if count:
             return total_reward / count
         else:
+            # All immediate children are ties.
             return 0.0
 
 
@@ -235,10 +239,10 @@ def create_model():
         name="board_input",
     )
 
+    l2_reg = regularizers.l2(0.0001)
+
     x = layers.Flatten()(board_input)
-    x = layers.Dense(512, activation="relu")(x)
-    x = layers.Dense(256, activation="relu")(x)
-    x = layers.Dense(128, activation="relu")(x)
+    x = layers.Dense(512, activation="relu", kernel_regularizer=l2_reg)(x)
 
     move_output = layers.Dense(
         9,
