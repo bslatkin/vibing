@@ -219,7 +219,10 @@ def generate_training_data():
 
     result = []
     for move_dict in best_moves.values():
-        result.extend(move_dict.values())
+        for example in move_dict.values():
+            # XXX Only keep winning moves
+            if example.reward > 0.0:
+                result.append(example)
 
     print(f"Finished generating examples. {len(result)} examples")
 
@@ -238,9 +241,8 @@ def create_model():
     )
 
     x = layers.Flatten()(board_input)
-    x = layers.Dense(8192, activation="relu")(x)
-    x = layers.Dense(4096, activation="relu")(x)
-    x = layers.Dense(1024, activation="relu")(x)
+    x = layers.Dense(256, activation="relu")(x)
+    x = layers.Dense(128, activation="relu")(x)
 
     move_output = layers.Dense(
         9,
@@ -302,7 +304,7 @@ def train_model(
         random_state=42,
     )
 
-    learning_rate = 0.0001
+    learning_rate = 0.0005
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
