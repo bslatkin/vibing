@@ -239,7 +239,8 @@ def create_model():
     l2_reg = None
 
     x = layers.Flatten()(board_input)
-    x = layers.Dense(128, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(256, activation="tanh", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(256, activation="tanh", kernel_regularizer=l2_reg)(x)
 
     move_output = layers.Dense(
         9,
@@ -313,7 +314,7 @@ def train_model(
         X_board_train, y_move_train = X_board, y_move
         X_board_test, y_move_test = [], []
 
-    learning_rate = 0.001
+    learning_rate = 0.0001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
