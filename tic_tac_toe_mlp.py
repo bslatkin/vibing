@@ -26,7 +26,6 @@ class TicTacToe:
         self.current_player = 1  # Player X starts
         self.parent_board = None
         self.child_boards = {}  # Map (row, col) of the play to the child board
-        self.child_wins = 0
 
     def is_valid_move(self, row, col):
         return 0 <= row < 3 and 0 <= col < 3 and self.board[row, col] == 0
@@ -110,41 +109,42 @@ def generate_all_games(game, counter):
         generate_all_games(new_game, counter)
 
 
-def count_outcomes(game):
-    assert game.parent_board
-    if game.check_winner() == game.last_player:
-        game.parent_board.child_wins += 1
-
-
 def calculate_reward(game):
+    """
+    Calculates the reward for a given game state using a minimax-like approach.
+    """
     winner = game.check_winner()
-
-    if winner == game.last_player:
-        return 1.0
-    elif game.is_board_full():
-        return 0.0
-    elif game.child_wins:
-        # If this game has any immediate wins, then that means the previous
-        # player blew it with their last move.
-        return -1.0
-    else:
-        # Calculate the average reward of all the children's children,
-        # skipping the current player's turn.
-        total_reward = 0.0
-        count = 0
-        for child in game.child_boards.values():
-            if not child.child_boards:
-                assert child.is_board_full()
-
-            for grand_child in child.child_boards.values():
-                total_reward += calculate_reward(grand_child)
-                count += 1
-
-        if count:
-            return total_reward / count
+    if winner != 0:
+        if winner == game.last_player:
+            return 1.0  # Win for the last player
         else:
-            # All immediate children are ties.
-            return 0.0
+            return -1.0  # Loss for the last player
+    elif game.is_board_full():
+        return 0.0  # Draw
+
+    if not game.child_boards:
+        return 0.0
+
+    # Go through the child nodes, for each one determine if the next
+    # move results in a win or loss. If any of the next moves results
+    # in a win, that means the opponent will win, so return a loss reward.
+    # If any of the next moves results in a loss, that means I will win,
+    # so return a win reward.
+    any_wins = False
+    any_loses = False
+    for child in game.child_boards.values():
+        reward = calculate_reward(child)
+        if reward > 0:
+            any_wins = True
+        elif reward < 0:
+            any_loses = True
+
+    if any_wins:
+        return -1.0
+    elif any_loses:
+        return 1.0
+    else:
+        return 0.0
 
 
 def create_training_examples(row, col, game, data):
@@ -168,15 +168,6 @@ def create_training_examples(row, col, game, data):
         create_training_examples(child_row, child_col, child, data)
 
 
-def iterate_leaf_games(game):
-    for child in game.child_boards.values():
-        if child.check_winner() != 0 or child.is_board_full():
-            # Only yield leaf games that are complete
-            yield child
-        else:
-            yield from iterate_leaf_games(child)
-
-
 def generate_training_data():
     """
     Generates training data by enumerating all possible Tic-Tac-Toe games.
@@ -187,9 +178,6 @@ def generate_training_data():
     counter = [0]
     generate_all_games(game, counter)
     print(f"Finished generating data. {counter[0]} games")
-
-    for child in iterate_leaf_games(game):
-        count_outcomes(child)
 
     data = []
     create_training_examples(-1, -1, game, data)
@@ -239,10 +227,11 @@ def create_model():
         name="board_input",
     )
 
-    l2_reg = regularizers.l2(0.0001)
+    # l2_reg = regularizers.l2(0.0001)
+    l2_reg = None
 
     x = layers.Flatten()(board_input)
-    x = layers.Dense(512, activation="relu", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(128, activation="relu", kernel_regularizer=l2_reg)(x)
 
     move_output = layers.Dense(
         9,
@@ -477,18 +466,18 @@ def inspect_data(data: list[TrainingExample]):
     selected_example_index = random.randint(0, len(data) - 1)
     selected_example = data[selected_example_index]
 
-    # matching_examples = []
-    # for i, example in enumerate(data):
-    #     if np.all(example.board_state == selected_example.board_state):
-    #         matching_examples.append((i, example))
-
-    # target = np.array([[0, -1, 0], [0, -1, 1], [1, 1, -1]])
-    target = np.array([[1, 1, -1], [0, 0, -1], [-1, 1, 0]])
-
     matching_examples = []
     for i, example in enumerate(data):
-        if np.all(example.board_state == target):
+        if np.all(example.board_state == selected_example.board_state):
             matching_examples.append((i, example))
+
+    # target = np.array([[0, -1, 0], [0, -1, 1], [1, 1, -1]])
+    # target = np.array([[1, 1, -1], [0, 0, -1], [-1, 1, 0]])
+    # target = np.array([[0, 1, 0], [-1, -1, 0], [-1, 1, 1]])
+    # matching_examples = []
+    # for i, example in enumerate(data):
+    #     if np.all(example.board_state == target):
+    #         matching_examples.append((i, example))
 
     for i, example in matching_examples:
         print(f"Inspecting example {i+1}:")
