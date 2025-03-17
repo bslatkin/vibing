@@ -236,6 +236,8 @@ def create_model():
     )
 
     x = layers.Flatten()(board_input)
+    x = layers.Dense(512, activation="relu")(x)
+    x = layers.Dense(256, activation="relu")(x)
     x = layers.Dense(128, activation="relu")(x)
 
     move_output = layers.Dense(
@@ -263,6 +265,9 @@ class TestAccuracyCallback(Callback):
         self.test_set_size = len(X_board_input_test)
 
     def on_epoch_end(self, epoch, logs=None):
+        if not self.X_board_input_test:
+            return
+
         results = self.model.evaluate(
             self.X_board_input_test,
             self.y_move_test,
@@ -281,24 +286,33 @@ class TestAccuracyCallback(Callback):
 
 
 def train_model(
-    model, data, checkpoint_callback, epochs=10, batch_size=32, test_size=0.01
+    model,
+    data,
+    checkpoint_callback,
+    epochs=10,
+    batch_size=32,
+    test_size=0.0,
 ):
     X_board = np.array([example.board_state for example in data])
     y_move = np.array([example.move_one_hot for example in data])
 
-    (
-        X_board_train,
-        X_board_test,
-        y_move_train,
-        y_move_test,
-    ) = train_test_split(
-        X_board,
-        y_move,
-        test_size=test_size,
-        random_state=42,
-    )
+    if test_size:
+        (
+            X_board_train,
+            X_board_test,
+            y_move_train,
+            y_move_test,
+        ) = train_test_split(
+            X_board,
+            y_move,
+            test_size=test_size,
+            random_state=42,
+        )
+    else:
+        X_board_train, y_move_train = X_board, y_move
+        X_board_test, y_move_test = [], []
 
-    learning_rate = 0.00001
+    learning_rate = 0.0001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
@@ -324,7 +338,6 @@ def train_model(
         y_move_train,
         epochs=epochs,
         batch_size=batch_size,
-        validation_data=(X_board_test, y_move_test),
         callbacks=[test_accuracy_callback, checkpoint_callback],
     )
     return model
