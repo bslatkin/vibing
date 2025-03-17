@@ -227,6 +227,8 @@ def create_model():
     x = layers.Flatten()(board_input)
 
     # Dense layers
+    x = layers.Dense(4096, activation="relu")(x)
+    x = layers.Dense(1024, activation="relu")(x)
     x = layers.Dense(512, activation="relu")(x)
 
     # Move branch
@@ -290,7 +292,7 @@ def train_model(
         random_state=42,
     )
 
-    learning_rate = 0.000001
+    learning_rate = 0.0001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
