@@ -191,10 +191,10 @@ def generate_training_data():
     best_moves = {}
     for example in data:
         key = tuple(example.board_state.flatten())
+        move_key = tuple(example.move_one_hot.flatten())
 
         found = best_moves.get(key)
         if not found:
-            move_key = tuple(example.board_state.flatten())
             best_moves[key] = {move_key: example}
         else:
             max_reward = max(move.reward for move in found.values())
@@ -227,7 +227,7 @@ def create_model():
     x = layers.Flatten()(board_input)
 
     # Dense layers
-    x = layers.Dense(128, activation="relu")(x)
+    x = layers.Dense(512, activation="relu")(x)
 
     # Move branch
     move_output = layers.Dense(
@@ -290,7 +290,7 @@ def train_model(
         random_state=42,
     )
 
-    learning_rate = 0.0001
+    learning_rate = 0.000001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
@@ -453,11 +453,11 @@ def inspect_data(data: list[TrainingExample]):
     selected_example = data[selected_example_index]
 
     matching_examples = []
-    for example in data:
+    for i, example in enumerate(data):
         if np.all(example.board_state == selected_example.board_state):
-            matching_examples.append(example)
+            matching_examples.append((i, example))
 
-    for i, example in enumerate(matching_examples):
+    for i, example in matching_examples:
         print(f"Inspecting example {i+1}:")
         print(f"Reward: {example.reward}")
 
