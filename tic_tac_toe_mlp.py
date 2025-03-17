@@ -186,6 +186,7 @@ def generate_training_data():
     # Moves at the same board state that have the same result value (equal
     # to the maximum) are included in the training data too.
     best_moves = {}
+    board_count = {}
     for example in data:
         key = tuple(example.board_state.flatten())
         move_key = tuple(example.move_one_hot.flatten())
@@ -193,7 +194,9 @@ def generate_training_data():
         found = best_moves.get(key)
         if not found:
             best_moves[key] = {move_key: example}
+            board_count[key] = 1
         else:
+            board_count[key] += 1
             max_reward = max(move.reward for move in found.values())
             if example.reward > max_reward:
                 best_moves[key] = {move_key: example}
@@ -209,7 +212,12 @@ def generate_training_data():
         for example in example_it:
             first.move_one_hot |= example.move_one_hot
 
-        result.append(first)
+        # Repeat this example for every time it was seen in the training data
+        # to emphasize how important it is as an example to do well on.
+        key = tuple(first.board_state.flatten())
+        count = board_count[key]
+        for _ in range(count):
+            result.append(first)
 
     print(f"Finished generating examples. {len(result)} examples")
 
@@ -305,7 +313,7 @@ def train_model(
         X_board_train, y_move_train = X_board, y_move
         X_board_test, y_move_test = [], []
 
-    learning_rate = 0.0001
+    learning_rate = 0.001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
@@ -462,37 +470,26 @@ def inspect_data(data: list[TrainingExample]):
         print("No data to inspect.")
         return
 
-    # Select a random example
-    selected_example_index = random.randint(0, len(data) - 1)
-    selected_example = data[selected_example_index]
-
-    matching_examples = []
-    for i, example in enumerate(data):
-        if np.all(example.board_state == selected_example.board_state):
-            matching_examples.append((i, example))
+    example = random.choice(data)
 
     # target = np.array([[0, -1, 0], [0, -1, 1], [1, 1, -1]])
     # target = np.array([[1, 1, -1], [0, 0, -1], [-1, 1, 0]])
     # target = np.array([[0, 1, 0], [-1, -1, 0], [-1, 1, 1]])
-    # matching_examples = []
     # for i, example in enumerate(data):
     #     if np.all(example.board_state == target):
-    #         matching_examples.append((i, example))
+    #         selected_example = example
+    #         break
 
-    for i, example in matching_examples:
-        print(f"Inspecting example {i+1}:")
-        print(f"Reward: {example.reward}")
+    print(f"Reward: {example.reward}")
 
-        for move_index in range(9):
-            if example.move_one_hot[move_index]:
-                row = move_index // 3
-                col = move_index % 3
-                print(f"Move:   ({row}, {col})")
+    for move_index in range(9):
+        if example.move_one_hot[move_index]:
+            row = move_index // 3
+            col = move_index % 3
+            print(f"Move:   ({row}, {col})")
 
-        print("Board State (0=empty, 1=Me, -1=Opponent):")
-        print(example.board_state)
-
-        print("-" * 20)
+    print("Board State (0=empty, 1=Me, -1=Opponent):")
+    print(example.board_state)
 
 
 def save_model(model, filename):
