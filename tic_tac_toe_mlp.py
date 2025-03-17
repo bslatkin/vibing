@@ -110,70 +110,67 @@ def generate_all_games(game, counter):
         generate_all_games(new_game, counter)
 
 
-def calculate_wins(game, target_player):
+def turns_until_win(game, target_player):
+    if game.current_player == target_player:
+        turn_delta = 1
+    else:
+        turn_delta = 0
+
     winner = game.check_winner()
-    if winner != 0:
-        if winner == target_player:
-            return 1
-        else:
-            return 0
-    elif game.is_board_full():
+    if winner == target_player:
         return 0
+    elif winner != 0:
+        return 10
+    elif game.is_board_full():
+        return 10
 
-    wins = 0
+    min_turns = 10
+    max_turns = 0
+
     for child in game.child_boards.values():
-        wins += calculate_wins(child, target_player)
+        my_turns = turns_until_win(child, target_player)
+        min_turns = min(min_turns, my_turns + turn_delta)
 
-    return wins
+        their_turns = turns_until_win(child, 3 - target_player)
+        max_turns = max(max_turns, their_turns)
 
-
-def calculate_wins(game):
-    pass
+    return min(min_turns, max_turns)
 
 
 def calculate_reward(game):
     """
-    Calculates the reward for a given game state using a minimax-like approach.
+    Calculates the reward for a given game state.
     """
-    winner = game.check_winner()
-    if winner != 0:
-        if winner == game.last_player:
-            return 1.0  # Win for the last player
-        else:
-            return -1.0  # Loss for the last player
-    elif game.is_board_full():
-        return 0.0  # Draw
+    if not game.parent_board:
+        return 0.0
 
-    assert game.child_boards
+    winner = game.check_winner()
+    if winner == game.last_player:
+        return 1.0
+    elif winner != 0:
+        return -1.0
+    elif game.is_board_full():
+        return 0.0
+
+    # If any of the child boards here are possible winners then
+    # this move was bad.
+    for child in game.child_boards.values():
+        if child.check_winner() == game.last_player:
+            return -1.0
 
     target = np.array([[1, -1, 0], [0, 0, 1], [-1, 0, 0]])
     if np.all(game.board_encoded() == target):
         x = [
-            (key, calculate_reward(child))
-            for key, child in game.child_boards.items()
+            turns_until_win(c, game.last_player)
+            for c in game.child_boards.values()
         ]
         breakpoint()
 
-    # Go through the child nodes, for each one determine if the next
-    # move results in a win or loss. If any of the next moves results
-    # in a win, that means the opponent will win, so return a loss reward.
-    # If any of the next moves results in a loss, that means I will win,
-    # so return a win reward.
-    wins = 0
-    losses = 0
-    for child in game.child_boards.values():
-        reward = calculate_reward(child)
-        if reward > 0:
-            wins += 1
-        elif reward < 0:
-            losses += 1
-
-    if wins:
-        return -wins / (wins + losses)
-    elif losses:
-        return losses / (wins + losses)
-    else:
-        return 0.0
+    # Figure out which player has the fewest moves to win
+    my_turns_to_win = turns_until_win(game, game.last_player)
+    their_turns_to_win = turns_until_win(game, game.current_player)
+    score = (their_turns_to_win - my_turns_to_win) / 3
+    return score
 
 
 def create_training_examples(row, col, game, data):
@@ -506,7 +503,7 @@ def inspect_data(data: list[TrainingExample]):
     # target = np.array([[1, 1, -1], [0, 0, -1], [-1, 1, 0]])
     # target = np.array([[0, 1, 0], [-1, -1, 0], [-1, 1, 1]])
     target = np.array([[1, -1, 0], [0, 0, 1], [-1, 0, 0]])
-
+    # target = np.array([[-1, 0, 0], [0, 0, 0], [1, -1, 1]])
     for example in data:
         if np.all(example.board_state == target):
             selected_example = example
