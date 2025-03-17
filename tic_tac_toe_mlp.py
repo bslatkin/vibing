@@ -15,7 +15,8 @@ from tensorflow.keras.callbacks import Callback
 @dataclass
 class TrainingExample:
     board_state: np.ndarray
-    move_one_hot: np.ndarray
+    row: int
+    col: int
     reward: float
 
 
@@ -109,6 +110,27 @@ def generate_all_games(game, counter):
         generate_all_games(new_game, counter)
 
 
+def calculate_wins(game, target_player):
+    winner = game.check_winner()
+    if winner != 0:
+        if winner == target_player:
+            return 1
+        else:
+            return 0
+    elif game.is_board_full():
+        return 0
+
+    wins = 0
+    for child in game.child_boards.values():
+        wins += calculate_wins(child, target_player)
+
+    return wins
+
+
+def calculate_wins(game):
+    pass
+
+
 def calculate_reward(game):
     """
     Calculates the reward for a given game state using a minimax-like approach.
@@ -122,42 +144,47 @@ def calculate_reward(game):
     elif game.is_board_full():
         return 0.0  # Draw
 
-    if not game.child_boards:
-        return 0.0
+    assert game.child_boards
+
+    target = np.array([[1, -1, 0], [0, 0, 1], [-1, 0, 0]])
+    if np.all(game.board_encoded() == target):
+        x = [
+            (key, calculate_reward(child))
+            for key, child in game.child_boards.items()
+        ]
+        breakpoint()
 
     # Go through the child nodes, for each one determine if the next
     # move results in a win or loss. If any of the next moves results
     # in a win, that means the opponent will win, so return a loss reward.
     # If any of the next moves results in a loss, that means I will win,
     # so return a win reward.
-    any_wins = False
-    any_loses = False
+    wins = 0
+    losses = 0
     for child in game.child_boards.values():
         reward = calculate_reward(child)
         if reward > 0:
-            any_wins = True
+            wins += 1
         elif reward < 0:
-            any_loses = True
+            losses += 1
 
-    if any_wins:
-        return -1.0
-    elif any_loses:
-        return 1.0
+    if wins:
+        return -wins / (wins + losses)
+    elif losses:
+        return losses / (wins + losses)
     else:
         return 0.0
 
 
 def create_training_examples(row, col, game, data):
     if row != -1 and col != -1:
-        move_one_hot = np.zeros(9, dtype=int)
-        move_one_hot[row * 3 + col] = 1
-
         reward = calculate_reward(game)
 
         data.append(
             TrainingExample(
                 board_state=game.parent_board.board_encoded(),
-                move_one_hot=move_one_hot,
+                row=row,
+                col=col,
                 reward=reward,
             )
         )
@@ -189,7 +216,7 @@ def generate_training_data():
     board_count = {}
     for example in data:
         key = tuple(example.board_state.flatten())
-        move_key = tuple(example.move_one_hot.flatten())
+        move_key = (example.row, example.col)
 
         found = best_moves.get(key)
         if not found:
@@ -205,52 +232,41 @@ def generate_training_data():
 
     result = []
     for move_dict in best_moves.values():
-        # Merge all of the equivalent moves into a single training example
-        # with the one-hot encoding of the good moves combined.
-        example_it = iter(move_dict.values())
-        first = next(example_it)
-        for example in example_it:
-            first.move_one_hot |= example.move_one_hot
-
-        # Repeat this example for every time it was seen in the training data
-        # to emphasize how important it is as an example to do well on.
-        key = tuple(first.board_state.flatten())
-        count = board_count[key]
-        for _ in range(count):
-            result.append(first)
+        # TODO: Add the example for each time it's seen in potential games.
+        result.extend(move_dict.values())
 
     print(f"Finished generating examples. {len(result)} examples")
 
     return result
 
 
-def one_hot_to_move(move_index):
-    """Converts a move index to a (row, col) tuple."""
-    return move_index // 3, move_index % 3
-
-
-def create_model():
+def create_model() -> keras.Model:
     board_input = keras.Input(
         shape=(3, 3),
         name="board_input",
     )
 
-    # l2_reg = regularizers.l2(0.0001)
-    l2_reg = None
+    l2_reg = regularizers.l2(0.0001)
+    # l2_reg = None
 
     x = layers.Flatten()(board_input)
     x = layers.Dense(256, activation="tanh", kernel_regularizer=l2_reg)(x)
     x = layers.Dense(256, activation="tanh", kernel_regularizer=l2_reg)(x)
 
-    move_output = layers.Dense(
-        9,
+    row_output = layers.Dense(
+        3,
         activation="softmax",
-        name="move_output",
+        name="row_output",
+    )(x)
+    col_output = layers.Dense(
+        3,
+        activation="softmax",
+        name="col_output",
     )(x)
 
-    model = keras.Model(
+    model = keras.Model = keras.Model(
         inputs=board_input,
-        outputs=move_output,
+        outputs=[row_output, col_output],
     )
     return model
 
@@ -296,17 +312,24 @@ def train_model(
     test_size=0.0,
 ):
     X_board = np.array([example.board_state for example in data])
-    y_move = np.array([example.move_one_hot for example in data])
+    y_row = np.zeros((len(data), 3))
+    y_col = np.zeros((len(data), 3))
+    for i, example in enumerate(data):
+        y_row[i, example.row] = 1
+        y_col[i, example.col] = 1
 
     if test_size:
         (
             X_board_train,
             X_board_test,
-            y_move_train,
-            y_move_test,
+            y_row_train,
+            y_row_test,
+            y_col_train,
+            y_col_test,
         ) = train_test_split(
             X_board,
-            y_move,
+            y_row,
+            y_col,
             test_size=test_size,
             random_state=42,
         )
@@ -320,24 +343,25 @@ def train_model(
     model.compile(
         optimizer=optimizer,
         loss={
-            "move_output": "categorical_crossentropy",
+            "row_output": "categorical_crossentropy",
+            "col_output": "categorical_crossentropy",
         },
         loss_weights={
-            "move_output": 1.0,
+            "row_output": 1.0,
+            "col_output": 1.0,
         },
-        metrics={
-            "move_output": "accuracy",
-        },
+        metrics={"row_output": ["accuracy"], "col_output": ["accuracy"]},
     )
 
     test_accuracy_callback = TestAccuracyCallback(
         X_board_test,
-        y_move_test,
+        y_row_test,
+        y_col_test,
     )
 
     model.fit(
         X_board_train,
-        y_move_train,
+        {"row_output": y_row_train, "col_output": y_col_train},
         epochs=epochs,
         batch_size=batch_size,
         callbacks=[test_accuracy_callback, checkpoint_callback],
@@ -356,30 +380,35 @@ def predict_next_move(model, game):
         ),
         verbose=0,
     )
-    move_probabilities = predictions[0]
+    move_probabilities = predictions[0].flatten()
 
-    # Mask out invalid moves
-    for i in range(9):
-        row, col = one_hot_to_move(i)
-        if not game.is_valid_move(row, col):
-            move_probabilities[i] = 0  # Set probability to 0 for invalid moves
+    row_probabilities = move_probabilities[0:3]
+    col_probabilities = move_probabilities[3:6]
 
-    # Normalize probabilities to sum to 1 (if there are any valid moves)
-    if np.sum(move_probabilities) > 0:
-        move_probabilities /= np.sum(move_probabilities)
+    # Find the most likely row and column
+    best_row = np.argmax(row_probabilities)
+    best_col = np.argmax(col_probabilities)
 
-    # Print probabilities for all moves
-    print("Move Probabilities:")
-    for i in range(9):
-        row, col = one_hot_to_move(i)
-        if game.is_valid_move(row, col):
-            print(f"  ({row}, {col}): {move_probabilities[i]:.4f}")
-        else:
-            print(f"  ({row}, {col}): Invalid")
+    # Check if the best move is valid
+    if game.is_valid_move(best_row, best_col):
+        return best_row, best_col
 
-    # Choose the move with the highest probability
-    move_index = np.argmax(move_probabilities)
-    return move_index // 3, move_index % 3
+    # If the best move is not valid, find the next best valid move
+    valid_moves = []
+    for row in range(3):
+        for col in range(3):
+            if game.is_valid_move(row, col):
+                valid_moves.append((row, col))
+
+    if not valid_moves:
+        raise ValueError("No valid moves available")
+
+    # If there are valid moves, choose one randomly
+    return random.choice(valid_moves)
+
+    # # Choose the move with the highest probability
+    # move_index = np.argmax(move_probabilities)
+    # return move_index // 3, move_index % 3
 
 
 class CheckpointCallback(Callback):
@@ -471,26 +500,29 @@ def inspect_data(data: list[TrainingExample]):
         print("No data to inspect.")
         return
 
-    example = random.choice(data)
+    selected_example = random.choice(data)
 
     # target = np.array([[0, -1, 0], [0, -1, 1], [1, 1, -1]])
     # target = np.array([[1, 1, -1], [0, 0, -1], [-1, 1, 0]])
     # target = np.array([[0, 1, 0], [-1, -1, 0], [-1, 1, 1]])
-    # for i, example in enumerate(data):
-    #     if np.all(example.board_state == target):
-    #         selected_example = example
-    #         break
+    target = np.array([[1, -1, 0], [0, 0, 1], [-1, 0, 0]])
 
-    print(f"Reward: {example.reward}")
+    for example in data:
+        if np.all(example.board_state == target):
+            selected_example = example
+            break
 
-    for move_index in range(9):
-        if example.move_one_hot[move_index]:
-            row = move_index // 3
-            col = move_index % 3
-            print(f"Move:   ({row}, {col})")
+    all_examples = []
+    for example in data:
+        if np.all(example.board_state == selected_example.board_state):
+            all_examples.append(example)
 
-    print("Board State (0=empty, 1=Me, -1=Opponent):")
-    print(example.board_state)
+    for example in all_examples:
+        print(f"Reward: {example.reward}")
+        print(f"Move:   ({example.row}, {example.col})")
+
+        print("Board State (0=empty, 1=Me, -1=Opponent):")
+        print(example.board_state)
 
 
 def save_model(model, filename):
