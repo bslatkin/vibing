@@ -14,7 +14,7 @@ from tensorflow.keras.callbacks import Callback
 
 @dataclass
 class TrainingExample:
-    board_state_one_hot: np.ndarray
+    board_state: np.ndarray
     move_one_hot: np.ndarray
     reward: float
 
@@ -81,18 +81,10 @@ class TicTacToe:
     def is_board_full(self):
         return np.all(self.board != 0)
 
-    def one_hot_board(self):
-        """Converts a 3x3 board to a 3x3x3 one-hot tensor."""
-        one_hot_board = np.zeros((3, 3, 3), dtype=int)
-        for r in range(3):
-            for c in range(3):
-                if self.board[r, c] == 0:
-                    one_hot_board[r, c, 0] = 1
-                elif self.board[r, c] == 1:
-                    one_hot_board[r, c, 1] = 1  # Player 1's piece
-                else:
-                    one_hot_board[r, c, 2] = 1  # Player 2's piece
-        return one_hot_board
+    def board_encoded(self):
+        copy = self.board.copy()
+        copy[copy == 2] = -1
+        return copy
 
 
 def generate_all_games(game, counter):
@@ -155,7 +147,7 @@ def create_training_examples(row, col, game, data):
 
         data.append(
             TrainingExample(
-                board_state_one_hot=game.parent_board.one_hot_board(),
+                board_state=game.parent_board.board_encoded(),
                 move_one_hot=move_one_hot,
                 reward=reward,
             )
@@ -198,11 +190,11 @@ def generate_training_data():
     # to the maximum) are included in the training data too.
     best_moves = {}
     for example in data:
-        key = tuple(example.board_state_one_hot.flatten())
+        key = tuple(example.board_state.flatten())
 
         found = best_moves.get(key)
         if not found:
-            move_key = tuple(example.move_one_hot.flatten())
+            move_key = tuple(example.board_state.flatten())
             best_moves[key] = {move_key: example}
         else:
             max_reward = max(move.reward for move in found.values())
@@ -213,10 +205,7 @@ def generate_training_data():
 
     result = []
     for move_dict in best_moves.values():
-        # XXX Keeping equivalent moves for the same starting board seems
-        # to confuse the model. Instead just pick one.
-        # result.extend(move_dict.values())
-        result.append(next(iter(move_dict.values())))
+        result.extend(move_dict.values())
 
     print(f"Finished generating examples. {len(result)} examples")
 
@@ -228,9 +217,9 @@ def one_hot_to_move(move_index):
     return move_index // 3, move_index % 3
 
 
-def create_model(num_filters=32, kernel_size=(2, 2)):
+def create_model():
     board_input = keras.Input(
-        shape=(3, 3, 3),
+        shape=(3, 3),
         name="board_input",
     )
 
@@ -238,8 +227,6 @@ def create_model(num_filters=32, kernel_size=(2, 2)):
     x = layers.Flatten()(board_input)
 
     # Dense layers
-    x = layers.Dense(4096, activation="relu")(x)
-    x = layers.Dense(1024, activation="relu")(x)
     x = layers.Dense(128, activation="relu")(x)
 
     # Move branch
@@ -288,7 +275,7 @@ class TestAccuracyCallback(Callback):
 def train_model(
     model, data, checkpoint_callback, epochs=10, batch_size=32, test_size=0.01
 ):
-    X_board = np.array([example.board_state_one_hot for example in data])
+    X_board = np.array([example.board_state for example in data])
     y_move = np.array([example.move_one_hot for example in data])
 
     (
@@ -337,7 +324,7 @@ def train_model(
 
 def predict_next_move(model, game):
     """Predicts the next move based on the current board state."""
-    board_state = game.one_hot_board()
+    board_state = game.board_encoded()
 
     predictions = model.predict(
         np.expand_dims(
@@ -455,19 +442,6 @@ def load_data(filename):
     return data
 
 
-def one_hot_to_board(board_state_one_hot: np.ndarray):
-    board_state = np.zeros((3, 3), dtype=int)
-    for r in range(3):
-        for c in range(3):
-            if board_state_one_hot[r, c, 0] == 1:
-                board_state[r, c] = 0
-            elif board_state_one_hot[r, c, 1] == 1:
-                board_state[r, c] = 1
-            elif board_state_one_hot[r, c, 2] == 1:
-                board_state[r, c] = 2
-    return board_state
-
-
 def inspect_data(data: list[TrainingExample]):
     """Inspects the generated test data and prints out a sequence of moves."""
     if not data:
@@ -480,9 +454,7 @@ def inspect_data(data: list[TrainingExample]):
 
     matching_examples = []
     for example in data:
-        if np.all(
-            example.board_state_one_hot == selected_example.board_state_one_hot
-        ):
+        if np.all(example.board_state == selected_example.board_state):
             matching_examples.append(example)
 
     for i, example in enumerate(matching_examples):
@@ -494,9 +466,8 @@ def inspect_data(data: list[TrainingExample]):
         col = move_index % 3
         print(f"Move:   ({row}, {col})")
 
-        print("Board State (0=empty, 1=Me, 2=Opponent):")
-        board_state = one_hot_to_board(example.board_state_one_hot)
-        print(board_state)
+        print("Board State (0=empty, 1=X, -1=O):")
+        print(example.board_state)
 
         print("-" * 20)
 
