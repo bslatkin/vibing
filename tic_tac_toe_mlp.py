@@ -82,8 +82,13 @@ class TicTacToe:
         return np.all(self.board != 0)
 
     def board_encoded(self):
+        # The board is always in the perspective of the current player.
         copy = self.board.copy()
-        copy[copy == 2] = -1
+        if self.current_player == 1:
+            copy[copy == 2] = -1
+        else:
+            copy[copy == 1] = -1
+            copy[copy == 2] = 1
         return copy
 
 
@@ -117,25 +122,30 @@ def calculate_reward(game):
     if winner == game.last_player:
         return 1.0
     elif game.is_board_full():
-        return 0.0
+        # Incentivize ties
+        return 0.5
     elif game.child_wins:
         # If this game has any immediate wins, then that means the previous
         # player blew it with their last move.
         return -1.0
     else:
+        assert game.child_boards
+
         # Calculate the average reward of all the children's children,
         # skipping the current player's turn.
         total_reward = 0.0
         count = 0
         for child in game.child_boards.values():
-            for grand_child in child.child_boards.values():
-                total_reward += calculate_reward(grand_child)
+            if not child.child_boards:
+                # Every outcome after this child is a loss
+                total_reward += -1.0
                 count += 1
+            else:
+                for grand_child in child.child_boards.values():
+                    total_reward += calculate_reward(grand_child)
+                    count += 1
 
-        if count:
-            return total_reward / count
-        else:
-            return 0.0
+        return total_reward / count
 
 
 def create_training_examples(row, col, game, data):
@@ -144,6 +154,10 @@ def create_training_examples(row, col, game, data):
         move_one_hot[row * 3 + col] = 1
 
         reward = calculate_reward(game)
+        if reward and game.current_player == 2:
+            # The training data is always from the perspective
+            # of the current player.
+            reward = -reward
 
         data.append(
             TrainingExample(
@@ -223,15 +237,11 @@ def create_model():
         name="board_input",
     )
 
-    # Flatten for dense layers
     x = layers.Flatten()(board_input)
-
-    # Dense layers
+    x = layers.Dense(8192, activation="relu")(x)
     x = layers.Dense(4096, activation="relu")(x)
     x = layers.Dense(1024, activation="relu")(x)
-    x = layers.Dense(512, activation="relu")(x)
 
-    # Move branch
     move_output = layers.Dense(
         9,
         activation="softmax",
@@ -468,7 +478,7 @@ def inspect_data(data: list[TrainingExample]):
         col = move_index % 3
         print(f"Move:   ({row}, {col})")
 
-        print("Board State (0=empty, 1=X, -1=O):")
+        print("Board State (0=empty, 1=Me, -1=Opponent):")
         print(example.board_state)
 
         print("-" * 20)
