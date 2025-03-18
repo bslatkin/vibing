@@ -244,20 +244,11 @@ def generate_training_data():
 
     result = []
     for move_dict in best_moves.values():
-        # Make one example that encodes all of the moves together as
-        # having equal value.
-        examples_it = iter(move_dict.values())
-        first = next(examples_it)
-        for example in examples_it:
-            for i in range(9):
-                if example.move_one_hot[i]:
-                    first.move_one_hot[i] = 1
-
-        # Put in examples proportional to their frequency in real games.
-        key = tuple(first.board_state.flatten())
-        count = board_count[key]
-        for _ in range(count):
-            result.append(first)
+        for example in move_dict.values():
+            key = tuple(example.board_state.flatten())
+            count = board_count[key]
+            for _ in range(count):
+                result.append(example)
 
     print(f"Finished generating examples. {len(result)} examples")
 
@@ -347,7 +338,7 @@ def train_model(
         X_board_train, y_move_train = X_board, y_move
         X_board_test, y_move_test = [], []
 
-    learning_rate = 0.0001
+    learning_rate = 0.001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
