@@ -15,6 +15,7 @@ from tensorflow.keras.callbacks import Callback
 @dataclass
 class TrainingExample:
     board_state: np.ndarray
+    move_one_hot: np.ndarray
     row: int
     col: int
     reward: float
@@ -169,9 +170,13 @@ def create_training_examples(row, col, game, data):
         else:
             reward = 0.0
 
+        move_one_hot = np.zeros(9)
+        move_one_hot[row * 3 + col] = 1
+
         data.append(
             TrainingExample(
                 board_state=game.parent_board.board_encoded(),
+                move_one_hot=move_one_hot,
                 row=row,
                 col=col,
                 reward=reward,
@@ -237,8 +242,16 @@ def generate_training_data():
 
     result = []
     for move_dict in best_moves.values():
-        # TODO: Add the example for each time it's seen in potential games.
-        result.extend(move_dict.values())
+        # Make one example that encodes all of the moves together as
+        # having equal value.
+        examples_it = iter(move_dict.values())
+        first = next(examples_it)
+        for example in examples_it:
+            for i in range(9):
+                if example.move_one_hot[i]:
+                    first.move_one_hot[i] = 1
+
+        result.append(first)
 
     print(f"Finished generating examples. {len(result)} examples")
 
@@ -308,9 +321,7 @@ def train_model(
     test_size=0.0,
 ):
     X_board = np.array([example.board_state for example in data])
-    y_move = np.zeros((len(data), 9))
-    for i, example in enumerate(data):
-        y_move[i, example.row * 3 + example.col] = 1
+    y_move = np.array([example.move_one_hot for example in data])
 
     if test_size:
         (
@@ -487,7 +498,11 @@ def inspect_data(data: list[TrainingExample]):
 
     for example in all_examples:
         print(f"Reward: {example.reward}")
-        print(f"Move:   ({example.row}, {example.col})")
+
+        for i in range(9):
+            row, col = i // 3, i % 3
+            if example.move_one_hot[i]:
+                print(f"Move:   ({row}, {col})")
 
         print("Board State (0=empty, 1=Me, -1=Opponent):")
         print(example.board_state)
