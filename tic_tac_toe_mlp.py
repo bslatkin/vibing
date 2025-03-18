@@ -251,37 +251,32 @@ def create_model() -> keras.Model:
         name="board_input",
     )
 
-    l2_reg = regularizers.l2(0.0001)
-    # l2_reg = None
+    # l2_reg = regularizers.l2(0.0001)
+    l2_reg = None
 
     x = layers.Flatten()(board_input)
+    x = layers.Dense(4096, activation="tanh", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(1024, activation="tanh", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(512, activation="tanh", kernel_regularizer=l2_reg)(x)
     x = layers.Dense(256, activation="tanh", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(256, activation="tanh", kernel_regularizer=l2_reg)(x)
-
-    row_output = layers.Dense(
-        3,
+    x = layers.Dense(128, activation="tanh", kernel_regularizer=l2_reg)(x)
+    move_output = layers.Dense(
+        9,
         activation="softmax",
-        name="row_output",
+        name="move_output",
     )(x)
-    col_output = layers.Dense(
-        3,
-        activation="softmax",
-        name="col_output",
-    )(x)
-
     model = keras.Model = keras.Model(
         inputs=board_input,
-        outputs=[row_output, col_output],
+        outputs=move_output,
     )
     return model
 
 
 class TestAccuracyCallback(Callback):
-    def __init__(self, X_board_input_test, y_row_test, y_col_test):
+    def __init__(self, X_board_input_test, y_move_test):
         super().__init__()
         self.X_board_input_test = X_board_input_test
-        self.y_row_test = y_row_test
-        self.y_col_test = y_col_test
+        self.y_move_test = y_move_test
         self.test_set_size = len(X_board_input_test)
 
     def on_epoch_end(self, epoch, logs=None):
@@ -290,21 +285,15 @@ class TestAccuracyCallback(Callback):
 
         results = self.model.evaluate(
             self.X_board_input_test,
-            {
-                "row_output": self.y_row_test,
-                "col_output": self.y_col_test,
-            },
+            self.y_move_test,
             verbose=0,
             return_dict=True,
         )
 
         print()
-        print()
         print(f"Epoch {epoch+1}:")
         print(f"  Test set size: {self.test_set_size}")
         print(f"  Loss: {results['loss']:.4f}")
-        print(f"  Row Loss: {results['row_output_loss']:.4f}")
-        print(f"  Col Loss: {results['col_output_loss']:.4f}")
         print(f"  Accuracy: {results['accuracy']:.4f}")
         print()
         print()
@@ -319,56 +308,43 @@ def train_model(
     test_size=0.0,
 ):
     X_board = np.array([example.board_state for example in data])
-    y_row = np.zeros((len(data), 3))
-    y_col = np.zeros((len(data), 3))
+    y_move = np.zeros((len(data), 9))
     for i, example in enumerate(data):
-        y_row[i, example.row] = 1
-        y_col[i, example.col] = 1
+        y_move[i, example.row * 3 + example.col] = 1
 
     if test_size:
         (
             X_board_train,
             X_board_test,
-            y_row_train,
-            y_row_test,
-            y_col_train,
-            y_col_test,
+            y_move_train,
+            y_move_test,
         ) = train_test_split(
             X_board,
-            y_row,
-            y_col,
+            y_move,
             test_size=test_size,
             random_state=42,
         )
     else:
-        X_board_train, y_row_train, y_col_train = X_board, y_row, y_col
-        X_board_test, y_row_test, y_col_test = [], [], []
+        X_board_train, y_move_train = X_board, y_move
+        X_board_test, y_move_test = [], []
 
-    learning_rate = 0.0001
+    learning_rate = 0.00001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
         optimizer=optimizer,
-        loss={
-            "row_output": "categorical_crossentropy",
-            "col_output": "categorical_crossentropy",
-        },
-        loss_weights={
-            "row_output": 1.0,
-            "col_output": 1.0,
-        },
-        metrics={"row_output": ["accuracy"], "col_output": ["accuracy"]},
+        loss="categorical_crossentropy",
+        metrics=["accuracy"],
     )
 
     test_accuracy_callback = TestAccuracyCallback(
         X_board_test,
-        y_row_test,
-        y_col_test,
+        y_move_test,
     )
 
     model.fit(
         X_board_train,
-        {"row_output": y_row_train, "col_output": y_col_train},
+        y_move_train,
         epochs=epochs,
         batch_size=batch_size,
         callbacks=[test_accuracy_callback, checkpoint_callback],
@@ -381,41 +357,26 @@ def predict_next_move(model, game):
     board_state = game.board_encoded()
 
     predictions = model.predict(
-        np.expand_dims(
-            board_state,
-            axis=0,
-        ),
+        np.expand_dims(board_state, axis=0),
         verbose=0,
     )
-    move_probabilities = predictions[0].flatten()
+    move_probabilities = predictions.flatten()
 
-    row_probabilities = move_probabilities[0:3]
-    col_probabilities = move_probabilities[3:6]
-
-    # Find the most likely row and column
-    best_row = np.argmax(row_probabilities)
-    best_col = np.argmax(col_probabilities)
-
-    # Check if the best move is valid
-    if game.is_valid_move(best_row, best_col):
-        return best_row, best_col
-
-    # If the best move is not valid, find the next best valid move
+    # Mask out invalid moves
     valid_moves = []
-    for row in range(3):
-        for col in range(3):
-            if game.is_valid_move(row, col):
-                valid_moves.append((row, col))
+    for i in range(9):
+        row, col = i // 3, i % 3
+        if not game.is_valid_move(row, col):
+            move_probabilities[i] = 0  # Set probability to 0 for invalid moves
+        else:
+            valid_moves.append((row, col))
 
     if not valid_moves:
         raise ValueError("No valid moves available")
 
     # If there are valid moves, choose one randomly
-    return random.choice(valid_moves)
-
-    # # Choose the move with the highest probability
-    # move_index = np.argmax(move_probabilities)
-    # return move_index // 3, move_index % 3
+    move_index = np.argmax(move_probabilities)
+    return move_index // 3, move_index % 3
 
 
 class CheckpointCallback(Callback):
