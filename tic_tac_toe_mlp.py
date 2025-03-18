@@ -27,6 +27,9 @@ class TicTacToe:
         self.current_player = 1  # Player X starts
         self.parent_board = None
         self.child_boards = {}  # Map (row, col) of the play to the child board
+        self.reward_x = 0.0
+        self.reward_o = 0.0
+        self.scored = False
 
     def is_valid_move(self, row, col):
         return 0 <= row < 3 and 0 <= col < 3 and self.board[row, col] == 0
@@ -118,73 +121,68 @@ def generate_all_games(game, counter):
         generate_all_games(new_game, counter)
 
 
-def turns_until_win(game, target_player):
-    winner = game.check_winner()
-    if winner == target_player:
-        return {game.depth(): 1}
-    elif winner != 0:
-        return 10
-    elif game.is_board_full():
-        return 10
-
-    min_depth = 10
-
-    for child in game.child_boards.values():
-        their_depth = turns_until_win(child, 3 - target_player)
-        my_depth = turns_until_win(child, target_player)
-        if my_depth < their_depth:
-            min_depth = min(min_depth, my_depth)
-
-    # XXX the score of a node is a combination of 1) how many turns until
-    # it wins and 2) how many possible avenues does it have to win if you
-    # take it.
-
-    return min_depth
-
-
 def calculate_reward(game):
-    """
-    Calculates the reward for a given game state.
-    """
-    if not game.parent_board:
-        return 0.0
+    if game.scored:
+        return
 
     winner = game.check_winner()
-    if winner == game.last_player:
-        return 1.0
-    elif winner != 0:
-        return -1.0
+    if winner == 1:
+        game.reward_x = 1.0
+        game.reward_o = -1.0
+        game.scored = True
+        calculate_reward(game.parent_board)
+    elif winner == 2:
+        game.reward_x = -1.0
+        game.reward_o = 1.0
+        game.scored = True
+        calculate_reward(game.parent_board)
     elif game.is_board_full():
-        return 0.0
+        game.reward_x = 0.0
+        game.reward_o = 0.0
+        game.scored = True
+        calculate_reward(game.parent_board)
+    else:
+        max_x = -1.0
+        max_o = -1.0
+        min_x = 1.0
+        min_o = 1.0
 
-    # If any of the child boards here are possible winners then
-    # this move was bad.
-    for child in game.child_boards.values():
-        if child.check_winner() == game.last_player:
-            return -1.0
+        for child in game.child_boards.values():
+            max_x = max(max_x, child.reward_x)
+            max_o = max(max_o, child.reward_o)
+            min_x = min(min_x, child.reward_x)
+            min_o = min(min_o, child.reward_o)
 
-    # Go through every child board and count the win depth
+        if game.current_player == 1:
+            game.reward_x = max_x
+            game.reward_o = min_x
+        elif game.current_player == 2:
+            game.reward_x = min_x
+            game.reward_o = max_x
 
-    target = np.array([[1, -1, 0], [0, 0, 1], [-1, 0, 0]])
-    if np.all(game.board_encoded() == target):
-        x = [
-            turns_until_win(c, game.last_player)
-            for c in game.child_boards.values()
-        ]
-        breakpoint()
+        if game.parent_board:
+            target = np.array([[1, -1, 0], [0, 0, 1], [-1, 0, 0]])
+            if np.all(game.board_encoded() == target):
+                x = list(game.child_boards.keys())
+                y = [
+                    (c.reward_x, c.reward_o)
+                    for c in game.child_boards.values()
+                ]
+                breakpoint()
 
-    # Figure out which player has the fewest moves to win
-    my_turns_to_win = game.depth() - turns_until_win(game, game.last_player)
-    their_turns_to_win = game.depth() - turns_until_win(
-        game, game.current_player
-    )
-    score = (their_turns_to_win - my_turns_to_win) / 3
-    return score
+        game.scored = True
+        if game.parent_board:
+            calculate_reward(game.parent_board)
 
 
 def create_training_examples(row, col, game, data):
     if row != -1 and col != -1:
-        reward = calculate_reward(game)
+        if game.last_player == 1:
+            reward = game.reward_x
+        elif game.last_player == 2:
+            reward = game.reward_o
+        else:
+            reward = 0.0
 
         data.append(
             TrainingExample(
@@ -201,6 +199,14 @@ def create_training_examples(row, col, game, data):
         create_training_examples(child_row, child_col, child, data)
 
 
+def iterate_games(game):
+    if game.check_winner() != 0 or game.is_board_full():
+        yield game
+
+    for child in game.child_boards.values():
+        yield from iterate_games(child)
+
+
 def generate_training_data():
     """
     Generates training data by enumerating all possible Tic-Tac-Toe games.
@@ -212,6 +218,11 @@ def generate_training_data():
     generate_all_games(game, counter)
     print(f"Finished generating data. {counter[0]} games")
 
+    print("Scoring all possible games...")
+    for leaf_game in iterate_games(game):
+        calculate_reward(leaf_game)
+
+    print("Creating training examples...")
     data = []
     create_training_examples(-1, -1, game, data)
 
