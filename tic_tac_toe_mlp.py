@@ -269,9 +269,6 @@ def create_model() -> keras.Model:
     x = layers.Dense(1024, activation="tanh", kernel_regularizer=l2_reg)(x)
     x = layers.Dense(1024, activation="tanh", kernel_regularizer=l2_reg)(x)
     x = layers.Dense(1024, activation="tanh", kernel_regularizer=l2_reg)(x)
-    # x = layers.Dense(512, activation="tanh", kernel_regularizer=l2_reg)(x)
-    # x = layers.Dense(256, activation="tanh", kernel_regularizer=l2_reg)(x)
-    # x = layers.Dense(128, activation="tanh", kernel_regularizer=l2_reg)(x)
     move_output = layers.Dense(
         9,
         activation="softmax",
@@ -315,8 +312,8 @@ def train_model(
     model,
     data,
     checkpoint_callback,
-    epochs=10,
-    batch_size=32,
+    epochs=5,
+    batch_size=128,
     test_size=0.0,
 ):
     X_board = np.array([example.board_state for example in data])
