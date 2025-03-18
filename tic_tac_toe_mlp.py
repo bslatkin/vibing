@@ -91,6 +91,14 @@ class TicTacToe:
             copy[copy == 2] = 1
         return copy
 
+    def depth(self):
+        result = 0
+        current = self.parent_board
+        while current:
+            result += 1
+            current = current.parent_board
+        return result
+
 
 def generate_all_games(game, counter):
     winner = game.check_winner()
@@ -111,30 +119,27 @@ def generate_all_games(game, counter):
 
 
 def turns_until_win(game, target_player):
-    if game.current_player == target_player:
-        turn_delta = 1
-    else:
-        turn_delta = 0
-
     winner = game.check_winner()
     if winner == target_player:
-        return 0
+        return {game.depth(): 1}
     elif winner != 0:
         return 10
     elif game.is_board_full():
         return 10
 
-    min_turns = 10
-    max_turns = 0
+    min_depth = 10
 
     for child in game.child_boards.values():
-        my_turns = turns_until_win(child, target_player)
-        min_turns = min(min_turns, my_turns + turn_delta)
+        their_depth = turns_until_win(child, 3 - target_player)
+        my_depth = turns_until_win(child, target_player)
+        if my_depth < their_depth:
+            min_depth = min(min_depth, my_depth)
 
-        their_turns = turns_until_win(child, 3 - target_player)
-        max_turns = max(max_turns, their_turns)
+    # XXX the score of a node is a combination of 1) how many turns until
+    # it wins and 2) how many possible avenues does it have to win if you
+    # take it.
 
-    return min(min_turns, max_turns)
+    return min_depth
 
 
 def calculate_reward(game):
@@ -158,6 +163,8 @@ def calculate_reward(game):
         if child.check_winner() == game.last_player:
             return -1.0
 
+    # Go through every child board and count the win depth
+
     target = np.array([[1, -1, 0], [0, 0, 1], [-1, 0, 0]])
     if np.all(game.board_encoded() == target):
         x = [
@@ -167,8 +174,10 @@ def calculate_reward(game):
         breakpoint()
 
     # Figure out which player has the fewest moves to win
-    my_turns_to_win = turns_until_win(game, game.last_player)
-    their_turns_to_win = turns_until_win(game, game.current_player)
+    my_turns_to_win = game.depth() - turns_until_win(game, game.last_player)
+    their_turns_to_win = game.depth() - turns_until_win(
+        game, game.current_player
+    )
     score = (their_turns_to_win - my_turns_to_win) / 3
     return score
 
