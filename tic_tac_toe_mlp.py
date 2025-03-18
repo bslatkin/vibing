@@ -19,6 +19,7 @@ class TrainingExample:
     row: int
     col: int
     reward: float
+    last_player: int
 
 
 class TicTacToe:
@@ -180,6 +181,7 @@ def create_training_examples(row, col, game, data):
                 row=row,
                 col=col,
                 reward=reward,
+                last_player=game.last_player,
             )
         )
         if data and len(data) % 100_000 == 0:
@@ -251,7 +253,11 @@ def generate_training_data():
                 if example.move_one_hot[i]:
                     first.move_one_hot[i] = 1
 
-        result.append(first)
+        # Put in examples proportional to their frequency in real games.
+        key = tuple(first.board_state.flatten())
+        count = board_count[key]
+        for _ in range(count):
+            result.append(first)
 
     print(f"Finished generating examples. {len(result)} examples")
 
@@ -270,9 +276,11 @@ def create_model() -> keras.Model:
     x = layers.Flatten()(board_input)
     x = layers.Dense(4096, activation="tanh", kernel_regularizer=l2_reg)(x)
     x = layers.Dense(1024, activation="tanh", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(512, activation="tanh", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(256, activation="tanh", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(128, activation="tanh", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(1024, activation="tanh", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(1024, activation="tanh", kernel_regularizer=l2_reg)(x)
+    # x = layers.Dense(512, activation="tanh", kernel_regularizer=l2_reg)(x)
+    # x = layers.Dense(256, activation="tanh", kernel_regularizer=l2_reg)(x)
+    # x = layers.Dense(128, activation="tanh", kernel_regularizer=l2_reg)(x)
     move_output = layers.Dense(
         9,
         activation="softmax",
@@ -339,7 +347,7 @@ def train_model(
         X_board_train, y_move_train = X_board, y_move
         X_board_test, y_move_test = [], []
 
-    learning_rate = 0.00001
+    learning_rate = 0.0001
     optimizer = Adam(learning_rate=learning_rate)
 
     model.compile(
