@@ -27,9 +27,8 @@ class TicTacToe:
         self.current_player = 1  # Player X starts
         self.parent_board = None
         self.child_boards = {}  # Map (row, col) of the play to the child board
-        self.reward_x = 0.0
-        self.reward_o = 0.0
-        self.scored = False
+        self.reward_x = None
+        self.reward_o = None
 
     def is_valid_move(self, row, col):
         return 0 <= row < 3 and 0 <= col < 3 and self.board[row, col] == 0
@@ -122,25 +121,16 @@ def generate_all_games(game, counter):
 
 
 def calculate_reward(game):
-    if game.scored:
-        return
-
     winner = game.check_winner()
     if winner == 1:
         game.reward_x = 1.0
         game.reward_o = -1.0
-        game.scored = True
-        calculate_reward(game.parent_board)
     elif winner == 2:
         game.reward_x = -1.0
         game.reward_o = 1.0
-        game.scored = True
-        calculate_reward(game.parent_board)
     elif game.is_board_full():
         game.reward_x = 0.0
         game.reward_o = 0.0
-        game.scored = True
-        calculate_reward(game.parent_board)
     else:
         max_x = -1.0
         max_o = -1.0
@@ -148,6 +138,9 @@ def calculate_reward(game):
         min_o = 1.0
 
         for child in game.child_boards.values():
+            assert child.reward_x is not None
+            assert child.reward_o is not None
+
             max_x = max(max_x, child.reward_x)
             max_o = max(max_o, child.reward_o)
             min_x = min(min_x, child.reward_x)
@@ -155,24 +148,16 @@ def calculate_reward(game):
 
         if game.current_player == 1:
             game.reward_x = max_x
-            game.reward_o = min_x
+            game.reward_o = min_o
         elif game.current_player == 2:
             game.reward_x = min_x
-            game.reward_o = max_x
+            game.reward_o = max_o
 
-        if game.parent_board:
-            target = np.array([[1, -1, 0], [0, 0, 1], [-1, 0, 0]])
-            if np.all(game.board_encoded() == target):
-                x = list(game.child_boards.keys())
-                y = [
-                    (c.reward_x, c.reward_o)
-                    for c in game.child_boards.values()
-                ]
-                breakpoint()
-
-        game.scored = True
-        if game.parent_board:
-            calculate_reward(game.parent_board)
+        # target = np.array([[1, -1, 0], [0, 0, 1], [-1, 0, 0]])
+        # if np.all(game.board_encoded() == target):
+        #     x = list(game.child_boards.keys())
+        #     y = [(c.reward_x, c.reward_o) for c in game.child_boards.values()]
+        #     breakpoint()
 
 
 def create_training_examples(row, col, game, data):
@@ -200,9 +185,7 @@ def create_training_examples(row, col, game, data):
 
 
 def iterate_games(game):
-    if game.check_winner() != 0 or game.is_board_full():
-        yield game
-
+    yield game
     for child in game.child_boards.values():
         yield from iterate_games(child)
 
@@ -218,9 +201,14 @@ def generate_training_data():
     generate_all_games(game, counter)
     print(f"Finished generating data. {counter[0]} games")
 
+    # This algorithm works one layer at a time starting with the deepest leaves
+    # to ensure that all child nodes have been scored before their parent
+    # nodes are scored.
     print("Scoring all possible games...")
-    for leaf_game in iterate_games(game):
-        calculate_reward(leaf_game)
+    all_leaf_games = list(iterate_games(game))
+    all_leaf_games.sort(key=lambda x: x.depth(), reverse=True)
+    for current_game in all_leaf_games:
+        calculate_reward(current_game)
 
     print("Creating training examples...")
     data = []
