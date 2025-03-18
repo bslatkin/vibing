@@ -188,7 +188,13 @@ def create_training_examples(row, col, game, data):
             print(f"Generated {len(data)} examples")
 
     for (child_row, child_col), child in game.child_boards.items():
-        create_training_examples(child_row, child_col, child, data)
+        # Only include children training data for draws and wins.
+        if child.last_player == 1 and child.reward_x < 0.0:
+            pass
+        elif child.last_player == 2 and child.reward_o < 0.0:
+            pass
+        else:
+            create_training_examples(child_row, child_col, child, data)
 
 
 def iterate_games(game):
@@ -266,8 +272,6 @@ def create_model() -> keras.Model:
 
     x = layers.Flatten()(board_input)
     x = layers.Dense(4096, activation="tanh", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(1024, activation="tanh", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(1024, activation="tanh", kernel_regularizer=l2_reg)(x)
     x = layers.Dense(1024, activation="tanh", kernel_regularizer=l2_reg)(x)
     move_output = layers.Dense(
         9,
