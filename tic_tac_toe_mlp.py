@@ -277,14 +277,11 @@ def create_model() -> keras.Model:
 
 
 class TestAccuracyCallback(Callback):
-    def __init__(
-        self,
-        X_board_input_test,
-        y_move_test,
-    ):
+    def __init__(self, X_board_input_test, y_row_test, y_col_test):
         super().__init__()
         self.X_board_input_test = X_board_input_test
-        self.y_move_test = y_move_test
+        self.y_row_test = y_row_test
+        self.y_col_test = y_col_test
         self.test_set_size = len(X_board_input_test)
 
     def on_epoch_end(self, epoch, logs=None):
@@ -293,7 +290,10 @@ class TestAccuracyCallback(Callback):
 
         results = self.model.evaluate(
             self.X_board_input_test,
-            self.y_move_test,
+            {
+                "row_output": self.y_row_test,
+                "col_output": self.y_col_test,
+            },
             verbose=0,
             return_dict=True,
         )
@@ -303,6 +303,8 @@ class TestAccuracyCallback(Callback):
         print(f"Epoch {epoch+1}:")
         print(f"  Test set size: {self.test_set_size}")
         print(f"  Loss: {results['loss']:.4f}")
+        print(f"  Row Loss: {results['row_output_loss']:.4f}")
+        print(f"  Col Loss: {results['col_output_loss']:.4f}")
         print(f"  Accuracy: {results['accuracy']:.4f}")
         print()
         print()
@@ -339,8 +341,8 @@ def train_model(
             random_state=42,
         )
     else:
-        X_board_train, y_move_train = X_board, y_move
-        X_board_test, y_move_test = [], []
+        X_board_train, y_row_train, y_col_train = X_board, y_row, y_col
+        X_board_test, y_row_test, y_col_test = [], [], []
 
     learning_rate = 0.0001
     optimizer = Adam(learning_rate=learning_rate)
@@ -510,12 +512,12 @@ def inspect_data(data: list[TrainingExample]):
     # target = np.array([[0, -1, 0], [0, -1, 1], [1, 1, -1]])
     # target = np.array([[1, 1, -1], [0, 0, -1], [-1, 1, 0]])
     # target = np.array([[0, 1, 0], [-1, -1, 0], [-1, 1, 1]])
-    target = np.array([[1, -1, 0], [0, 0, 1], [-1, 0, 0]])
+    # target = np.array([[1, -1, 0], [0, 0, 1], [-1, 0, 0]])
     # target = np.array([[-1, 0, 0], [0, 0, 0], [1, -1, 1]])
-    for example in data:
-        if np.all(example.board_state == target):
-            selected_example = example
-            break
+    # for example in data:
+    #     if np.all(example.board_state == target):
+    #         selected_example = example
+    #         break
 
     all_examples = []
     for example in data:
