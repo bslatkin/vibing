@@ -268,8 +268,8 @@ def create_model() -> keras.Model:
     l2_reg = None
 
     x = layers.Flatten()(board_input)
-    x = layers.Dense(4096, activation="tanh", kernel_regularizer=l2_reg)(x)
-    x = layers.Dense(1024, activation="tanh", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(256, activation="tanh", kernel_regularizer=l2_reg)(x)
+    x = layers.Dense(256, activation="tanh", kernel_regularizer=l2_reg)(x)
     move_output = layers.Dense(
         9,
         activation="softmax",
