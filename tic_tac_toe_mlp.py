@@ -187,14 +187,11 @@ def create_training_examples(row, col, game, data):
         if data and len(data) % 100_000 == 0:
             print(f"Generated {len(data)} examples")
 
+    # TODO: Consider narrowing these examples so it's the children that
+    # result in any positive outcome for X or O, but not for mistakes
+    # that result in draws.
     for (child_row, child_col), child in game.child_boards.items():
-        # Only include children training data for draws and wins.
-        if child.last_player == 1 and child.reward_x < 0.0:
-            pass
-        elif child.last_player == 2 and child.reward_o < 0.0:
-            pass
-        else:
-            create_training_examples(child_row, child_col, child, data)
+        create_training_examples(child_row, child_col, child, data)
 
 
 def iterate_games(game):
